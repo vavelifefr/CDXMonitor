@@ -1,0 +1,85 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDXMonitor (E2 stub)</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1117; color: #c9d1d9; font: 13px/1.5 Consolas, monospace; }
+  .wrap { max-width: 420px; margin: 0 auto; padding: 12px; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  .row { display: flex; justify-content: space-between; border-bottom: 1px solid #21262d; padding: 2px 0; }
+  .bar { height: 8px; background: #21262d; border-radius: 4px; margin: 4px 0 8px; }
+  .bar > div { height: 8px; background: #3fb950; border-radius: 4px; }
+  .muted { color: #8b949e; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CDXMonitor <span class="muted">E2 stub (SSE live)</span></h1>
+  <div id="sse" class="muted">подключение…</div>
+  <div class="row"><span>Модель</span><b id="model">—</b></div>
+  <div class="row"><span>Контекст</span><b id="ctx">—</b></div>
+  <div class="bar"><div id="ctxbar" style="width:0%"></div></div>
+  <div class="row"><span>TURN in/out</span><b id="turn">—</b></div>
+  <div class="row"><span>TASK in/out</span><b id="task">—</b></div>
+  <div class="row"><span>ROLLOUT in/out</span><b id="rollout">—</b></div>
+  <div class="row"><span>Лимит 5h / weekly</span><b id="limits">—</b></div>
+  <div class="row"><span>Compaction</span><b id="compact">—</b></div>
+  <div class="row"><span>Файл</span><b id="file" class="muted">—</b></div>
+  <div style="margin-top:8px"><a style="color:#58a6ff" href="help.html">Помощь: установка и работа</a></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  function fmt(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + "k";
+    return String(n);
+  }
+  function render(s) {
+    document.getElementById("model").textContent = s.model + (s.effort ? " " + s.effort : "");
+    document.getElementById("ctx").textContent =
+      fmt(s.context.used) + " / " + fmt(s.context.window) + " (" + s.context.fillPct.toFixed(1) + "%)";
+    document.getElementById("ctxbar").style.width = Math.min(100, s.context.fillPct) + "%";
+    document.getElementById("turn").textContent = fmt(s.turn.input) + " / " + fmt(s.turn.output);
+    document.getElementById("task").textContent = fmt(s.task.input) + " / " + fmt(s.task.output);
+    document.getElementById("rollout").textContent = fmt(s.rollout.input) + " / " + fmt(s.rollout.output);
+    var p = s.limits.primary.usedPercent, q = s.limits.secondary.usedPercent;
+    document.getElementById("limits").textContent =
+      (p === null ? "n/a" : p + "%") + " / " + (q === null ? "n/a" : q + "%");
+    document.getElementById("compact").textContent =
+      s.compaction.count + (s.compaction.lastTime ? " @ " + s.compaction.lastTime : "");
+    document.getElementById("file").textContent = s.file ? s.file.split(/[\\/]/).pop() : "n/a";
+  }
+  fetch("api/snapshot").then(function (r) { return r.json(); }).then(render);
+  var es = new EventSource("api/events");
+  es.onopen = function () { document.getElementById("sse").textContent = "SSE: live"; };
+  es.onerror = function () { document.getElementById("sse").textContent = "SSE: retry…"; };
+  es.onmessage = function (ev) {
+    try { render(JSON.parse(ev.data)); } catch (e) {}
+  };
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  // Installed copies carry absolute file:/// links (see install.ps1).
+  // Served over HTTP browsers block http->file navigation, so map back
+  // to the server aliases, which exist for all four pages.
+  try {
+    if (window.location.protocol.indexOf("http") === 0) {
+      var names = { "boot.html": 1, "help.html": 1, "stub.html": 1, "Statistic.html": 1 };
+      var links = document.querySelectorAll('a[href^="file:///"]');
+      for (var i = 0; i < links.length; i++) {
+        var href = links[i].getAttribute("href");
+        var base = href.split("/").pop().split("?")[0].split("#")[0];
+        if (names[base]) links[i].setAttribute("href", base);
+      }
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

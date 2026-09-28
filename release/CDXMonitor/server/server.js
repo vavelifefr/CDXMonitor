@@ -1,0 +1,313 @@
+"use strict";
+// E2 HTTP server: stdlib node:http only. Routes:
+//   GET /api/health   -> status + CORS * (polled by file:// boot page)
+//   GET /api/snapshot -> current snapshot JSON
+//   GET /api/sessions -> rollout list (id/kind/mtime/size, no paths)
+//   GET /api/events   -> SSE snapshot tick (1 Hz)
+//   GET /boot         -> boot.html (no-server start page)
+//   GET /             -> stub app page (E2 placeholder, React UI lands in E3)
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_BIND = exports.DEFAULT_PORT = exports.VERSION = void 0;
+exports.listSessions = listSessions;
+exports.startServer = startServer;
+const fs = __importStar(require("fs"));
+const http = __importStar(require("http"));
+const path = __importStar(require("path"));
+const types_1 = require("./collector/types");
+const classify_1 = require("./collector/classify");
+const snapshot_1 = require("./collector/snapshot");
+const tail_1 = require("./collector/tail");
+exports.VERSION = "0.3.0";
+exports.DEFAULT_PORT = 8765;
+exports.DEFAULT_BIND = "127.0.0.1";
+function walkRollouts(sessionsRoot) {
+    const out = [];
+    const walk = (dir) => {
+        let entries;
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        }
+        catch {
+            return;
+        }
+        for (const entry of entries) {
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory())
+                walk(full);
+            else if (entry.isFile() &&
+                entry.name.startsWith("rollout-") &&
+                entry.name.endsWith(".jsonl")) {
+                out.push(full);
+            }
+        }
+    };
+    walk(sessionsRoot);
+    return out;
+}
+function listSessions(sessionsRoot) {
+    const entries = [];
+    for (const full of walkRollouts(sessionsRoot)) {
+        try {
+            const st = fs.statSync(full);
+            entries.push({
+                id: path.basename(full),
+                kind: (0, classify_1.classifyRollout)(full),
+                mtimeMs: st.mtimeMs,
+                size: st.size,
+            });
+        }
+        catch {
+            // ignore disappearing files
+        }
+    }
+    entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return entries;
+}
+class Tracker {
+    sessionsRoot;
+    explicitFile;
+    rescanSeconds;
+    state = (0, types_1.initialState)();
+    cursor = (0, tail_1.newCursor)();
+    lastScan = 0;
+    startedAt = Date.now();
+    constructor(sessionsRoot, explicitFile, rescanSeconds) {
+        this.sessionsRoot = sessionsRoot;
+        this.explicitFile = explicitFile;
+        this.rescanSeconds = rescanSeconds;
+        this.tick(true);
+        if (this.state.file === null && this.explicitFile) {
+            this.state.file = this.explicitFile;
+        }
+    }
+    tick(force = false) {
+        const now = Date.now() / 1000;
+        if (force || now - this.lastScan >= this.rescanSeconds) {
+            this.lastScan = now;
+            const newest = (0, classify_1.newestRollout)(this.sessionsRoot, this.explicitFile);
+            if (newest !== null && newest !== this.state.file) {
+                this.state = (0, types_1.initialState)();
+                this.cursor = (0, tail_1.newCursor)();
+                (0, tail_1.scanFullFile)(newest, this.state, this.cursor);
+                this.state.file = newest;
+            }
+        }
+        if (this.state.file !== null) {
+            (0, tail_1.readNew)(this.state.file, this.state, this.cursor);
+        }
+    }
+}
+function sendJson(res, code, body) {
+    const text = JSON.stringify(body);
+    res.writeHead(code, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*",
+        "Content-Length": Buffer.byteLength(text),
+    });
+    res.end(text);
+}
+function sendFile(res, filePath, contentType) {
+    fs.readFile(filePath, (err, data) => {
+        if (err) {
+            res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end("not found");
+            return;
+        }
+        res.writeHead(200, {
+            "Content-Type": contentType,
+            "Content-Length": data.length,
+        });
+        res.end(data);
+    });
+}
+const STATIC_EXT = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+};
+// E3: serve the built UI (web/app) with a realpath guard. Only allowlisted
+// extensions inside the app dir; everything else (config, server, data) is
+// never served.
+function sendAppStatic(res, appDir, pathname) {
+    const rel = path.normalize(pathname).replace(/^[/\\]+/, "");
+    const full = path.join(appDir, rel);
+    const outside = path.relative(appDir, full).startsWith("..") || path.isAbsolute(path.relative(appDir, full));
+    if (rel === "" || outside)
+        return false;
+    const ext = path.extname(full).toLowerCase();
+    const contentType = STATIC_EXT[ext];
+    if (!contentType)
+        return false;
+    let st;
+    try {
+        st = fs.statSync(full);
+    }
+    catch {
+        return false;
+    }
+    if (!st.isFile())
+        return false;
+    const realApp = fs.realpathSync(appDir);
+    const realFull = fs.realpathSync(full);
+    if (realFull !== realApp && !realFull.startsWith(realApp + path.sep))
+        return false;
+    sendFile(res, full, contentType);
+    return true;
+}
+function startServer(opts) {
+    const rescanSeconds = opts.rescanSeconds ?? 5;
+    const tickMs = opts.tickMs ?? 1000;
+    const tracker = new Tracker(opts.sessionsRoot, opts.explicitFile, rescanSeconds);
+    const clients = new Set();
+    const server = http.createServer((req, res) => {
+        const url = new URL(req.url ?? "/", "http://localhost");
+        const pathname = url.pathname;
+        if (req.method === "OPTIONS") {
+            res.writeHead(204, {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+            });
+            res.end();
+            return;
+        }
+        if (pathname === "/api/health" && req.method === "GET") {
+            sendJson(res, 200, {
+                status: "ok",
+                version: exports.VERSION,
+                file: tracker.state.file ? path.basename(tracker.state.file) : null,
+                uptimeSec: Math.floor((Date.now() - tracker.startedAt) / 1000),
+            });
+            return;
+        }
+        if (pathname === "/api/snapshot" && req.method === "GET") {
+            tracker.tick();
+            sendJson(res, 200, (0, snapshot_1.buildSnapshot)(tracker.state));
+            return;
+        }
+        if (pathname === "/api/sessions" && req.method === "GET") {
+            sendJson(res, 200, listSessions(opts.sessionsRoot));
+            return;
+        }
+        if (pathname === "/api/events" && req.method === "GET") {
+            res.writeHead(200, {
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            });
+            res.write(": connected\n\n");
+            clients.add(res);
+            req.on("close", () => {
+                clients.delete(res);
+            });
+            return;
+        }
+        // .html aliases: the same relative links work via file:// and over HTTP.
+        if ((pathname === "/boot" || pathname === "/boot.html") && req.method === "GET") {
+            sendFile(res, path.join(opts.webDir, "boot.html"), "text/html; charset=utf-8");
+            return;
+        }
+        if ((pathname === "/help" || pathname === "/help.html") && req.method === "GET") {
+            sendFile(res, path.join(opts.webDir, "help.html"), "text/html; charset=utf-8");
+            return;
+        }
+        if (pathname === "/Statistic.html" && req.method === "GET") {
+            sendFile(res, path.join(opts.webDir, "Statistic.html"), "text/html; charset=utf-8");
+            return;
+        }
+        if (pathname === "/stub.html" && req.method === "GET") {
+            sendFile(res, path.join(opts.webDir, "stub.html"), "text/html; charset=utf-8");
+            return;
+        }
+        if (pathname === "/stub" && req.method === "GET") {
+            sendFile(res, path.join(opts.webDir, "stub.html"), "text/html; charset=utf-8");
+            return;
+        }
+        if ((pathname === "/" || pathname === "/index.html") && req.method === "GET") {
+            const appIndex = path.join(opts.webDir, "app", "index.html");
+            sendFile(res, fs.existsSync(appIndex)
+                ? appIndex
+                : path.join(opts.webDir, "stub.html"), "text/html; charset=utf-8");
+            return;
+        }
+        if (req.method === "GET" && sendAppStatic(res, path.join(opts.webDir, "app"), pathname)) {
+            return;
+        }
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("not found");
+    });
+    const timer = setInterval(() => {
+        tracker.tick();
+        const frame = "data: " + JSON.stringify((0, snapshot_1.buildSnapshot)(tracker.state)) + "\n\n";
+        for (const client of clients) {
+            try {
+                client.write(frame);
+            }
+            catch {
+                clients.delete(client);
+            }
+        }
+    }, tickMs);
+    timer.unref();
+    return new Promise((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(opts.port, opts.bind, () => {
+            const addr = server.address();
+            const port = typeof addr === "object" && addr !== null ? addr.port : opts.port;
+            resolve({
+                port,
+                stop: () => new Promise((done) => {
+                    clearInterval(timer);
+                    for (const client of clients) {
+                        try {
+                            client.end();
+                        }
+                        catch {
+                            // ignore
+                        }
+                    }
+                    clients.clear();
+                    server.close(() => done());
+                }),
+            });
+        });
+    });
+}

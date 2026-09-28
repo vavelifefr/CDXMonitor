@@ -1,0 +1,137 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDXMonitor — запуск</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1117; color: #c9d1d9; font: 14px/1.5 Consolas, monospace; }
+  .wrap { max-width: 420px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 16px; margin: 0 0 12px; }
+  .card { border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 12px; }
+  .status { font-weight: bold; }
+  .off { color: #f85149; } .wait { color: #d29922; } .on { color: #3fb950; }
+  a.btn { display: inline-block; background: #238636; color: #fff; text-decoration: none;
+    padding: 8px 16px; border-radius: 6px; margin-top: 8px; }
+  a.btn:hover { background: #2ea043; }
+  code { display: block; background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px; margin-top: 8px; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+  .hint { color: #8b949e; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CDXMonitor — запуск</h1>
+  <div class="card">
+    <div>Сервер: <span id="status" class="status off">проверка…</span></div>
+    <div class="hint" id="detail">опрос /api/health каждую секунду</div>
+  </div>
+  <div class="card" id="launchCard">
+    <div>Локальный сервер не запущен.</div>
+    <a class="btn" id="launchBtn" href="cdxmonitor://start">Запустить сервер</a>
+    <div class="hint">Кнопка требует регистрации протокола (install.ps1, один раз).</div>
+    <div class="hint" id="launchWarn" style="display:none;color:#f85149">Если ничего не произошло —
+    протокол не зарегистрирован: запустите install.ps1 один раз или start.cmd вручную.</div>
+  </div>
+  <div class="card">
+    <div>Страница статистики:</div>
+    <div><a style="color:#58a6ff" id="statDirect" href="http://127.0.0.1:8765/">http://127.0.0.1:8765/</a>
+    — прямая ссылка, работает при запущенном сервере.</div>
+    <div><a style="color:#58a6ff" href="Statistic.html">Statistic.html</a>
+    — файл-алиас на тот же адрес: можно открывать и держать в закладках.</div>
+  </div>
+  <div class="card">
+    <div>Вручную:</div>
+    <code id="manual">"&lt;папка-CDXMonitor&gt;\start.cmd"  (двойной клик)</code>
+    <div class="hint">Dev-сборка из исходников: scripts\launch.ps1 из корня проекта.</div>
+    <div class="hint">Страница сама перейдет на монитор, как только сервер поднимется.</div>
+    <div class="hint"><a style="color:#58a6ff" href="help.html">Помощь: установка, запуск, работа</a></div>
+  </div>
+</div>
+<script>
+(function () {
+  "use strict";
+  var DEFAULT_PORT = 8765;
+  function port() {
+    try {
+      var q = new URLSearchParams(window.location.search).get("port");
+      if (q && /^[0-9]{1,5}$/.test(q)) return Number(q);
+    } catch (e) {}
+    if (window.location.protocol.indexOf("http") === 0 && window.location.port) {
+      return Number(window.location.port);
+    }
+    return DEFAULT_PORT;
+  }
+  var PORT = port();
+  var statUrl = "http://127.0.0.1:" + PORT + "/";
+  var statDirect = document.getElementById("statDirect");
+  statDirect.setAttribute("href", statUrl);
+  statDirect.textContent = statUrl;
+  var statusEl = document.getElementById("status");
+  var detailEl = document.getElementById("detail");
+  var launchBtn = document.getElementById("launchBtn");
+  launchBtn.setAttribute("href", "cdxmonitor://start?port=" + PORT);
+  launchBtn.addEventListener("click", function () {
+    var w = document.getElementById("launchWarn");
+    window.setTimeout(function () { w.style.display = "block"; }, 1500);
+  });
+  // Подсказка с реальным путем: корень = папка перед web\boot.html.
+  try {
+    if (window.location.protocol === "file:") {
+      var p = decodeURIComponent(window.location.pathname).replace(/\//g, "\\");
+      var idx = p.toLowerCase().lastIndexOf("\\web\\boot.html");
+      if (idx > 0) {
+        var root = p.substring(0, idx);
+        if (root.charAt(0) === "\\" && /^[A-Za-z]:/.test(root.substring(1, 3))) {
+          root = root.substring(1);
+        }
+        document.getElementById("manual").textContent =
+          '"' + root + '\\start.cmd"  (двойной клик)';
+      }
+    }
+  } catch (e) {}
+  var url = "http://127.0.0.1:" + PORT + "/api/health";
+  function check() {
+    fetch(url, { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("http " + r.status);
+        return r.json();
+      })
+      .then(function (info) {
+        statusEl.textContent = "запущен";
+        statusEl.className = "status on";
+        detailEl.textContent = "переход на монитор…";
+        window.location.replace("http://127.0.0.1:" + PORT + "/");
+      })
+      .catch(function (err) {
+        statusEl.textContent = "остановлен";
+        statusEl.className = "status off";
+        detailEl.textContent = "опрос " + url + " (" + err.message + ")";
+      });
+  }
+  check();
+  window.setInterval(check, 1000);
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  // Installed copies carry absolute file:/// links (see install.ps1).
+  // Served over HTTP browsers block http->file navigation, so map back
+  // to the server aliases, which exist for all four pages.
+  try {
+    if (window.location.protocol.indexOf("http") === 0) {
+      var names = { "boot.html": 1, "help.html": 1, "stub.html": 1, "Statistic.html": 1 };
+      var links = document.querySelectorAll('a[href^="file:///"]');
+      for (var i = 0; i < links.length; i++) {
+        var href = links[i].getAttribute("href");
+        var base = href.split("/").pop().split("?")[0].split("#")[0];
+        if (names[base]) links[i].setAttribute("href", base);
+      }
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

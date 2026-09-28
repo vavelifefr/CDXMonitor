@@ -1,0 +1,161 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDXMonitor — помощь</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1117; color: #c9d1d9; font: 14px/1.6 Consolas, monospace; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px 16px 32px; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  h2 { font-size: 15px; margin: 20px 0 8px; border-bottom: 1px solid #30363d; padding-bottom: 4px; }
+  code { background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+    padding: 1px 5px; font-size: 12px; }
+  pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+    padding: 10px; overflow-x: auto; font-size: 12px; }
+  .note { border-left: 3px solid #1f6feb; padding: 4px 10px; margin: 8px 0; color: #8b949e; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 8px 0; }
+  th, td { border: 1px solid #30363d; padding: 4px 8px; text-align: left; }
+  th { background: #161b22; }
+  a { color: #58a6ff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>CDXMonitor — установка, запуск, работа</h1>
+<p>Локальный монитор статистики Codex Desktop. Только чтение данных, без сети и патчей Codex.</p>
+
+<h2>1. Требования</h2>
+<ul>
+  <li>Windows 11 x64, установленный Codex Desktop (источник данных: <code>%USERPROFILE%\.codex\sessions</code>).</li>
+  <li>Node.js 24+ в PATH (для текущей dev-сборки; переносимая сборка решит вопрос рантайма на этапе E8).</li>
+</ul>
+
+<h2>2. Первый запуск (dev-сборка)</h2>
+<pre>cd CDXMonitor
+npm install
+npm test        # сборка + проверки
+npm run build:ui
+npm run serve   # сервер на http://127.0.0.1:8765/</pre>
+<p>Откройте <code>http://127.0.0.1:8765/</code> во встроенном браузере правой панели Codex Desktop.</p>
+<div class="note">Если порт 8765 занят — сервер честно сообщит об этом и завершится.
+Освободите порт или запустите с другим: <code>npm run serve -- --port 8766</code>.</div>
+
+<h2>3. Старт без сервера (boot-страница)</h2>
+<p>Файл <code>web\boot.html</code> открывается двойным кликом без запущенного сервера:
+показывает статус и кнопку запуска. Кнопка использует протокол <code>cdxmonitor://start</code> —
+его регистрирует <code>install.ps1</code> при установке (HKCU, без прав администратора).</p>
+<p>Если кнопка не срабатывает: протокол не зарегистрирован — запустите <code>install.ps1</code>
+один раз либо <code>start.cmd</code> вручную. Без протокола страница тоже работает:
+поднимите сервер вручную, она сама перейдет на монитор.</p>
+
+<h2>4. Вкладки интерфейса</h2>
+<table>
+  <tr><th>Вкладка</th><th>Содержимое</th></tr>
+  <tr><td>Overview</td><td>Модель, контекст (занято/окно/%), TURN/TASK/ROLLOUT кратко, лимиты, задачи, compaction</td></tr>
+  <tr><td>Context</td><td>Окно, остаток, fresh, cache ratio, дельта за событие</td></tr>
+  <tr><td>Tokens</td><td>Полная таблица input/cached/cache-write/fresh/output/reasoning/total по TURN/TASK/ROLLOUT</td></tr>
+  <tr><td>Limits</td><td>Лимиты 5h и weekly: расход, обратный отсчет сброса, атрибуты лимита</td></tr>
+</table>
+<p>Данные обновляются автоматически каждую секунду (SSE), перезагрузка не нужна.</p>
+
+<h2>5. Как читать показатели</h2>
+<ul>
+  <li><b>TURN</b> — последнее событие использования; <b>TASK</b> — расход с начала текущей задачи;
+  <b>ROLLOUT</b> — суммарно по файлу сессии. Текущий контекст и суммарный расход — разные вещи.</li>
+  <li><b>Fresh = input − cached.</b> Reasoning-токены могут входить в output и показываются отдельно.</li>
+  <li><b>Primary (5h)</b> и <b>secondary (weekly)</b> — разные лимиты с разными сбросами, не смешивайте их.
+  Время сброса — обратный отсчет от метки Codex.</li>
+  <li>Метка <b>N/A</b> — данных нет (не ноль). Метка <b>EST</b> — оценка, а не факт.</li>
+  <li>Монитор следит за новейшим основным тредом; служебные review-ответвления пропускаются.</li>
+</ul>
+
+<h2>6. Решение проблем</h2>
+<table>
+  <tr><th>Симптом</th><th>Действие</th></tr>
+  <tr><td>Статус WAIT / «Нет связи с сервером»</td><td>Проверьте, что сервер запущен и адрес введен точно</td></tr>
+  <tr><td>Порт занят</td><td>Остановите второй экземпляр или задайте <code>--port</code></td></tr>
+  <tr><td>Пусто после переустановки Codex</td><td>Сессии лежат в <code>.codex\sessions</code> — дождитесь новой активности Codex</td></tr>
+  <tr><td>Подозрительные цифры после обновления Codex</td><td>Смотрите вкладку Diagnostics (этапы E4–E7): счетчик неизвестных записей схемы</td></tr>
+</table>
+
+<h2>7. Приватность</h2>
+<p>Монитор читает только числовые и структурные поля статистики. Тексты диалогов, файлы
+авторизации и секреты не читаются, не логируются и не показываются. В <code>.codex</code> ничего не пишется.</p>
+
+<h2>8. Переносимая сборка: какие файлы, куда, как запустить</h2>
+<p>Пакет <code>release/CDXMonitor/</code> собирается из исходников скриптом
+<code>scripts\build-release.ps1</code>. Переносится целиком, как есть.</p>
+<table>
+  <tr><th>Файл/папка пакета</th><th>Назначение</th></tr>
+  <tr><td><code>web/</code></td><td>Интерфейс: монитор, <code>boot.html</code>, <code>help.html</code> (эта страница), <code>pages/</code></td></tr>
+  <tr><td><code>server/</code></td><td>Локальный сервер и сборщик статистики (готовый к запуску)</td></tr>
+  <tr><td><code>config/cdxmonitor.json</code></td><td>Настройки: порт (8765), bind, каталог сессий, <code>dataDir</code></td></tr>
+  <tr><td><code>data/</code></td><td>Ваши данные (история, PID-файл). При обновлении не затирается</td></tr>
+  <tr><td><code>start.cmd</code></td><td>Запуск двойным кликом</td></tr>
+  <tr><td><code>stop.cmd</code></td><td>Остановка</td></tr>
+  <tr><td><code>install.ps1</code></td><td>Установка с выбором расположения и сохранением <code>data/</code></td></tr>
+  <tr><td><code>uninstall.ps1</code></td><td>Удаление только файлов CDXMonitor (<code>data/</code> сохраняется)</td></tr>
+  <tr><td><code>README.md</code></td><td>Краткая инструкция пакета</td></tr>
+</table>
+<p><b>Куда переносить</b> (окончательное расположение утверждается отдельно):</p>
+<ul>
+  <li><code>%LOCALAPPDATA%\OpenAI\Codex\CDXMonitor</code> — рядом с Codex (основной вариант);</li>
+  <li><code>%LOCALAPPDATA%\CDXMonitor</code> — запасной вариант.</li>
+</ul>
+<p><b>Как перенести:</b> скопируйте содержимое <code>release/CDXMonitor/</code> в целевой каталог
+вручную либо запустите <code>install.ps1</code> — он спросит расположение, проверит права и
+сохранит существующую папку <code>data/</code>. Файлы самого Codex (<code>bin</code>,
+<code>runtimes</code> и др.) не затрагиваются.</p>
+<p><b>Как запустить:</b></p>
+<ol>
+  <li>Двойной клик <code>start.cmd</code> в папке установки.</li>
+  <li>Во встроенном браузере правой панели Codex откройте <code>http://127.0.0.1:8765/</code>
+  (порт — из <code>config/cdxmonitor.json</code>).</li>
+  <li>Остановка — двойной клик <code>stop.cmd</code>.</li>
+</ol>
+<p>Удобнее: действие <b>Start CDXMonitor</b> через Local Environments → Actions в настройках
+Codex (действие запускает <code>start.cmd</code> во встроенном терминале; без изменения файлов Codex).
+Требуется Node.js 24+ в PATH. Вкладка с локальным адресом может не восстанавливаться после
+перезапуска Codex — тогда откройте адрес заново.</p>
+
+<p><a href="boot.html">Стартовая страница</a> · <span id="monWrap"><a id="monLink" href="/">Монитор</a></span> · версия 0.3.0</p>
+<script>
+(function () {
+  "use strict";
+  // По file:// монитора нет (нужен сервер): ссылка заменяется подсказкой.
+  try {
+    if (window.location.protocol === "file:") {
+      document.getElementById("monWrap").textContent =
+        "Монитор: запустите сервер и откройте http://127.0.0.1:8765/";
+    }
+  } catch (e) {}
+})();
+</script>
+<hr style="border:0;border-top:1px solid #30363d;margin-top:20px">
+<div class="hint">Autor: Vave© 2026 · <a style="color:#58a6ff" href="mailto:vave@yandex.ru">vave@yandex.ru</a></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  // Installed copies carry absolute file:/// links (see install.ps1).
+  // Served over HTTP browsers block http->file navigation, so map back
+  // to the server aliases, which exist for all four pages.
+  try {
+    if (window.location.protocol.indexOf("http") === 0) {
+      var names = { "boot.html": 1, "help.html": 1, "stub.html": 1, "Statistic.html": 1 };
+      var links = document.querySelectorAll('a[href^="file:///"]');
+      for (var i = 0; i < links.length; i++) {
+        var href = links[i].getAttribute("href");
+        var base = href.split("/").pop().split("?")[0].split("#")[0];
+        if (names[base]) links[i].setAttribute("href", base);
+      }
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>
+</body>
+</html>

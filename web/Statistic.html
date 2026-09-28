@@ -1,0 +1,57 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="2;url=http://127.0.0.1:8765/">
+<title>CDXMonitor — статистика</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1117; color: #c9d1d9; font: 14px/1.5 Consolas, monospace; }
+  .wrap { max-width: 420px; margin: 0 auto; padding: 16px; }
+  a { color: #58a6ff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>CDXMonitor — переход на страницу статистики…</div>
+  <div>Если перехода нет (сервер остановлен): сначала запустите его через
+  <a href="boot.html">boot.html</a>, затем обновите эту страницу.</div>
+  <div>Прямая ссылка: <a id="direct" href="http://127.0.0.1:8765/">http://127.0.0.1:8765/</a></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  // Тот же адрес, но с поддержкой ?port= (по умолчанию 8765).
+  var port = 8765;
+  try {
+    var q = new URLSearchParams(window.location.search).get("port");
+    if (q && /^[0-9]{1,5}$/.test(q)) port = Number(q);
+  } catch (e) {}
+  var url = "http://127.0.0.1:" + port + "/";
+  document.getElementById("direct").setAttribute("href", url);
+  document.getElementById("direct").textContent = url;
+  window.location.replace(url);
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  // Installed copies carry absolute file:/// links (see install.ps1).
+  // Served over HTTP browsers block http->file navigation, so map back
+  // to the server aliases, which exist for all four pages.
+  try {
+    if (window.location.protocol.indexOf("http") === 0) {
+      var names = { "boot.html": 1, "help.html": 1, "stub.html": 1, "Statistic.html": 1 };
+      var links = document.querySelectorAll('a[href^="file:///"]');
+      for (var i = 0; i < links.length; i++) {
+        var href = links[i].getAttribute("href");
+        var base = href.split("/").pop().split("?")[0].split("#")[0];
+        if (names[base]) links[i].setAttribute("href", base);
+      }
+    }
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

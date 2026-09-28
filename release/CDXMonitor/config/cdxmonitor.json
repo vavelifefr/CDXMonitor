@@ -1,0 +1,8 @@
+{
+  "port": 8765,
+  "bind": "127.0.0.1",
+  "sessions": null,
+  "dataDir": "data",
+  "pidFile": "data/cdxmonitor.pid",
+  "logFile": "data/cdxmonitor.log"
+}
