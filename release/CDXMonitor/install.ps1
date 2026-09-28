@@ -111,3 +111,32 @@ catch {
 
 Write-Output "Installed to: $Target"
 Write-Output "Start: double-click start.cmd, then open http://127.0.0.1:8765/ in the Codex side-panel browser."
+
+# Add install dir to user PATH for the 'cdxm' command (consent; HKCU, no admin).
+$onPath = $false
+foreach ($p in ($env:Path -split ";")) {
+    if ($p -and ($p.TrimEnd("\") -ieq $Target.TrimEnd("\"))) { $onPath = $true }
+}
+if (-not $onPath) {
+    $addPath = $Force
+    if (-not $Force) {
+        $answer = Read-Host "Add install dir to user PATH (command 'cdxm')? [y/N]"
+        $addPath = ($answer -eq "y" -or $answer -eq "Y")
+    }
+    if ($addPath) {
+        $cur = [Environment]::GetEnvironmentVariable("Path", "User")
+        if (-not $cur) { $cur = "" }
+        [Environment]::SetEnvironmentVariable("Path", ($cur.TrimEnd(";") + ";" + $Target), "User")
+        try {
+            $sig = '[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
+            $t = Add-Type -Namespace CDXMon -Name EnvNotify -MemberDefinition $sig -PassThru
+            $r = [UIntPtr]::Zero
+            $t::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$r) | Out-Null
+        }
+        catch {}
+        Write-Output "Added to PATH (reopen terminal). Command: cdxm"
+    }
+}
+else {
+    Write-Output "Already on PATH. Command: cdxm"
+}

@@ -90,7 +90,9 @@ function loadConfig(configPath) {
     }
     let parsed;
     try {
-        parsed = JSON.parse(raw);
+        // Tolerate a leading BOM: editors often save JSON with one, and the
+        // project policy itself mandates BOM for text files.
+        parsed = JSON.parse(raw.replace(/^﻿/, ""));
     }
     catch (err) {
         throw new Error("bad JSON in " + configPath + ": " + String(err));

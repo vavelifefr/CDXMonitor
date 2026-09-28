@@ -81,6 +81,11 @@ Diagnostics/Settings — этапы E4–E7.
 молча делить порт (наблюдалось: ответы от «мертвых» процессов) — второй экземпляр на том же
 data-dir теперь отказывается явно (проверка живости PID, takeover stale). `stop.cmd` чистит
 lock. Тест spawn×2.
+- Команда `cdxm` (`packaging/cdxm.cmd` + `cdxm.ps1`): без аргументов — поднять и показать URL,
+`--open` — открыть в браузере по умолчанию, `stop`/`status`/`help`. `install.ps1` добавляет
+папку в user PATH (с согласия, + broadcast), `uninstall.ps1` убирает. Сервер терпит BOM
+в JSON-конфиге. Проверено в TEMP: help/status/start/stop, PATH туда-обратно чисто.
+`--open` живьем не тестировался (открывает браузер).
 - Скрытый запуск (баг «окно терминала»): `start.cmd` поднимает сервер без окна консоли
 (powershell Start-Process Hidden), ждет health до 10 c и сообщает итог; диагностика —
 `--log-file` (`data/cdxmonitor.log`, старт/ошибки/fatal). Протокол тоже запускает скрыто.

@@ -24,7 +24,7 @@ Copy-Item -LiteralPath (Join-Path $root "web\app") -Destination (Join-Path $rel 
 Copy-Item -LiteralPath (Join-Path $root "dist\src") -Destination (Join-Path $rel "server") -Recurse -Force
 
 $pack = Join-Path $root "packaging"
-foreach ($f in @("start.cmd", "stop.cmd", "install.ps1", "uninstall.ps1", "README.md")) {
+foreach ($f in @("start.cmd", "stop.cmd", "cdxm.cmd", "cdxm.ps1", "install.ps1", "uninstall.ps1", "README.md")) {
     Copy-Item -LiteralPath (Join-Path $pack $f) -Destination (Join-Path $rel $f) -Force
 }
 New-Item -ItemType Directory -Path (Join-Path $rel "config") -Force | Out-Null

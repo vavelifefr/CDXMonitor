@@ -36,3 +36,18 @@ try {
 catch {
     Write-Output ("WARNING: protocol removal failed: " + $_.Exception.Message)
 }
+
+# Remove install dir from user PATH (best effort).
+try {
+    $cur = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($cur) {
+        $parts = @($cur -split ";" | Where-Object {
+            $_ -and ($_.TrimEnd("\") -ine $Target.TrimEnd("\"))
+        })
+        [Environment]::SetEnvironmentVariable("Path", ($parts -join ";"), "User")
+        Write-Output "Removed from PATH."
+    }
+}
+catch {
+    Write-Output ("WARNING: PATH cleanup failed: " + $_.Exception.Message)
+}
