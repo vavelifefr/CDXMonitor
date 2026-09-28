@@ -59,7 +59,8 @@ const classify_1 = require("./collector/classify");
 const snapshot_1 = require("./collector/snapshot");
 const tail_1 = require("./collector/tail");
 const codexdb_1 = require("./codexdb");
-exports.VERSION = "0.6.0";
+const history_1 = require("./history");
+exports.VERSION = "0.7.0";
 exports.DEFAULT_PORT = 8765;
 exports.DEFAULT_BIND = "127.0.0.1";
 exports.TURNS_CACHE_SECONDS = 30;
@@ -377,6 +378,22 @@ function startServer(opts) {
     const tickMs = opts.tickMs ?? 5000;
     const tracker = new Tracker(opts.sessionsRoot, opts.explicitFile, rescanSeconds);
     const clients = new Set();
+    const historyDb = (0, history_1.openHistory)(opts.dataDir ?? null);
+    const historySeconds = opts.historySeconds ?? 60;
+    const recordTick = () => {
+        if (!historyDb)
+            return;
+        try {
+            tracker.tick();
+            (0, history_1.recordObservation)(historyDb, tracker.state);
+        }
+        catch {
+            // history must never break the server
+        }
+    };
+    if (historyDb) {
+        recordTick();
+    }
     const server = http.createServer((req, res) => {
         const url = new URL(req.url ?? "/", "http://localhost");
         const pathname = url.pathname;
@@ -506,6 +523,27 @@ function startServer(opts) {
             sendJson(res, 200, (0, codexdb_1.readCatalog)((0, codexdb_1.codexBaseFromSessions)(opts.sessionsRoot)));
             return;
         }
+        if (pathname === "/api/history" && req.method === "GET") {
+            if (!historyDb) {
+                sendJson(res, 200, { available: false, points: [] });
+                return;
+            }
+            const range = url.searchParams.get("range") === "week" ? "week" : "day";
+            const spanMs = range === "week" ? 7 * 24 * 3600 * 1000 : 24 * 3600 * 1000;
+            try {
+                tracker.tick();
+                (0, history_1.recordObservation)(historyDb, tracker.state);
+                sendJson(res, 200, {
+                    available: true,
+                    range,
+                    points: (0, history_1.queryHistory)(historyDb, Date.now() - spanMs, 300),
+                });
+            }
+            catch {
+                sendJson(res, 200, { available: false, points: [] });
+            }
+            return;
+        }
         if (pathname === "/api/events" && req.method === "GET") {
             res.writeHead(200, {
                 "Content-Type": "text/event-stream; charset=utf-8",
@@ -567,6 +605,8 @@ function startServer(opts) {
         }
     }, tickMs);
     timer.unref();
+    const historyTimer = setInterval(recordTick, Math.max(1, historySeconds) * 1000);
+    historyTimer.unref();
     return new Promise((resolve, reject) => {
         server.on("error", reject);
         server.listen(opts.port, opts.bind, () => {
@@ -576,6 +616,7 @@ function startServer(opts) {
                 port,
                 stop: () => new Promise((done) => {
                     clearInterval(timer);
+                    clearInterval(historyTimer);
                     for (const client of clients) {
                         try {
                             client.end();
@@ -585,6 +626,13 @@ function startServer(opts) {
                         }
                     }
                     clients.clear();
+                    try {
+                        if (historyDb)
+                            historyDb.close();
+                    }
+                    catch {
+                        // ignore
+                    }
                     server.close(() => done());
                 }),
             });

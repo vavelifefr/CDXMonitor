@@ -46,6 +46,7 @@
       var links = document.querySelectorAll('a[href^="file:///"]');
       for (var i = 0; i < links.length; i++) {
         var href = links[i].getAttribute("href");
+        links[i].setAttribute("data-file", href);
         var base = href.split("/").pop().split("?")[0].split("#")[0];
         if (names[base]) links[i].setAttribute("href", base);
       }

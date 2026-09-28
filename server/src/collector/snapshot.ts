@@ -8,6 +8,47 @@ export function pct(part: number, whole: number): number {
   return Math.max(0, Math.min(100, (part * 100) / whole));
 }
 
+export interface LimitSlot {
+  usedPercent: number | null;
+  windowMinutes: number | null;
+  resetsAt: number | null;
+  source: string;
+}
+
+// Window-based slot resolution. Plans differ in which limit objects Codex
+// emits (e.g. Pro may carry only a weekly window in `primary`), so slots are
+// assigned by window_minutes, never by primary/secondary position:
+//   240..360 min -> fiveHour; >= 10000 min -> weekly; anything else -> other.
+// Unknown windows are shown generically, never mislabeled.
+export function resolveLimitSlots(
+  primary: LimitSlot,
+  secondary: LimitSlot,
+): { fiveHour: LimitSlot | null; weekly: LimitSlot | null; other: LimitSlot[] } {
+  const withSource = (slot: LimitSlot, source: string): LimitSlot => ({
+    usedPercent: slot.usedPercent,
+    windowMinutes: slot.windowMinutes,
+    resetsAt: slot.resetsAt,
+    source,
+  });
+  const prim = withSource(primary, "primary");
+  const sec = withSource(secondary, "secondary");
+  let fiveHour: LimitSlot | null = null;
+  let weekly: LimitSlot | null = null;
+  const other: LimitSlot[] = [];
+  for (const slot of [prim, sec]) {
+    if (slot.usedPercent === null) continue;
+    const w = slot.windowMinutes;
+    if (w !== null && w >= 240 && w <= 360 && fiveHour === null) {
+      fiveHour = slot;
+    } else if (w !== null && w >= 10000 && weekly === null) {
+      weekly = slot;
+    } else {
+      other.push(slot);
+    }
+  }
+  return { fiveHour, weekly, other };
+}
+
 export interface Snapshot {
   file: string | null;
   model: string;
@@ -28,6 +69,11 @@ export interface Snapshot {
   limits: {
     primary: Record<string, number | null>;
     secondary: Record<string, number | null>;
+    slots: {
+      fiveHour: LimitSlot | null;
+      weekly: LimitSlot | null;
+      other: LimitSlot[];
+    };
     limitName: string;
     limitId: string;
     planType: string;
@@ -72,6 +118,10 @@ export function buildSnapshot(state: CollectorState): Snapshot {
     limits: {
       primary: { ...state.primary },
       secondary: { ...state.secondary },
+      slots: resolveLimitSlots(
+        { ...state.primary, source: "primary" },
+        { ...state.secondary, source: "secondary" },
+      ),
       limitName: state.limitName,
       limitId: state.limitId,
       planType: state.planType,

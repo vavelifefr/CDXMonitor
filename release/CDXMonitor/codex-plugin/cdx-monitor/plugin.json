@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "cdx-monitor",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Local Codex Desktop stats: snapshot table ($cdx-stats) and one-click monitor open ($cdx-open).",
   "author": {
     "name": "Vave",

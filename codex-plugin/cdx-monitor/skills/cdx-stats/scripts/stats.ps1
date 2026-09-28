@@ -43,11 +43,15 @@ $lines += ("CTX {0} / {1} ({2:N1}%)  fresh {3}  cache {4:N1}%" -f (T $s.context.
 $lines += ("TURN    in {0} / out {1}" -f (T $s.turn.input), (T $s.turn.output))
 $lines += ("TASK    in {0} / out {1}" -f (T $s.task.input), (T $s.task.output))
 $lines += ("ROLLOUT in {0} / out {1}" -f (T $s.rollout.input), (T $s.rollout.output))
-$p5 = $s.limits.primary.usedPercent
-$p7 = $s.limits.secondary.usedPercent
-$lines += ("LIMITS  5h {0} / weekly {1}" -f (
-    $(if ($null -eq $p5) { "n/a" } else { "$p5%" }),
-    $(if ($null -eq $p7) { "n/a" } else { "$p7%" })))
+$slots = $s.limits.slots
+function Fmt-Slot($slot) {
+    if ($null -eq $slot -or $null -eq $slot.usedPercent) { return "n/a" }
+    return "$($slot.usedPercent)%"
+}
+$lines += ("LIMITS  5h {0} / weekly {1}" -f (Fmt-Slot $slots.fiveHour), (Fmt-Slot $slots.weekly)))
+foreach ($o in @($slots.other)) {
+    $lines += ("LIMIT?  окно {0} мин: {1} (из {2})" -f $o.windowMinutes, (Fmt-Slot $o), $o.source)
+}
 $lines += ("TASKS   {0} started / {1} done / {2} running  compaction x{3}" -f $s.tasks.started,
     $s.tasks.completed, $s.tasks.running, $s.compaction.count)
 $lines -join "`n"

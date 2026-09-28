@@ -8,7 +8,7 @@ using System.IO;
 // Build: csc /nologo /optimize /target:exe /out:uninstall.exe uninstall.cs
 sealed class Uninstall
 {
-    const string Version = "0.6.0";
+    const string Version = "0.7.0";
 
     static int Main(string[] args)
     {

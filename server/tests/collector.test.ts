@@ -12,6 +12,7 @@ import {
 } from "../src/collector/parse";
 import { classifyRollout, newestRollout } from "../src/collector/classify";
 import { newCursor, readNew, scanFullFile } from "../src/collector/tail";
+import { buildSnapshot, resolveLimitSlots } from "../src/collector/snapshot";
 import {
   compactedRecord,
   sessionMeta,
@@ -324,5 +325,51 @@ describe("tool activity and series", () => {
     assert.equal(s.series.length, 2);
     assert.ok(s.series[1]!.t > s.series[0]!.t);
     assert.equal(s.series[1]!.input, 2000);
+  });
+});
+
+describe("limit slot resolution", () => {
+  const slot = (used: number | null, window: number | null) => ({
+    usedPercent: used,
+    windowMinutes: window,
+    resetsAt: 100,
+    source: "test",
+  });
+  const empty = slot(null, null);
+
+  it("maps standard 300/10080 windows", () => {
+    const r = resolveLimitSlots(slot(81, 300), slot(59, 10080));
+    assert.equal(r.fiveHour?.usedPercent, 81);
+    assert.equal(r.fiveHour?.source, "primary");
+    assert.equal(r.weekly?.usedPercent, 59);
+    assert.deepEqual(r.other, []);
+  });
+
+  it("handles pro-style weekly-only primary", () => {
+    const r = resolveLimitSlots(slot(42, 10080), empty);
+    assert.equal(r.fiveHour, null);
+    assert.equal(r.weekly?.usedPercent, 42);
+    assert.equal(r.weekly?.source, "primary");
+  });
+
+  it("puts unknown windows into other, never mislabeled", () => {
+    const r = resolveLimitSlots(slot(10, 1440), empty);
+    assert.equal(r.fiveHour, null);
+    assert.equal(r.weekly, null);
+    assert.equal(r.other.length, 1);
+    assert.equal(r.other[0]?.windowMinutes, 1440);
+  });
+
+  it("skips empty slots", () => {
+    const r = resolveLimitSlots(empty, empty);
+    assert.equal(r.fiveHour, null);
+    assert.equal(r.weekly, null);
+    assert.deepEqual(r.other, []);
+  });
+
+  it("snapshot carries resolved slots", () => {
+    const s = feed([tokenRecord({ usedPercent: 11.0, windowMinutes: 10080 })]);
+    const snap = buildSnapshot(s);
+    assert.equal(snap.limits.slots.weekly?.usedPercent, 11.0);
   });
 });

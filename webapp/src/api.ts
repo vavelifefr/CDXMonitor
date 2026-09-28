@@ -15,6 +15,13 @@ export interface LimitInfo {
   resetsAt: number | null;
 }
 
+export interface LimitSlot {
+  usedPercent: number | null;
+  windowMinutes: number | null;
+  resetsAt: number | null;
+  source: string;
+}
+
 export interface Snapshot {
   file: string | null;
   model: string;
@@ -35,6 +42,11 @@ export interface Snapshot {
   limits: {
     primary: LimitInfo;
     secondary: LimitInfo;
+    slots: {
+      fiveHour: LimitSlot | null;
+      weekly: LimitSlot | null;
+      other: LimitSlot[];
+    };
     limitName: string;
     limitId: string;
     planType: string;
@@ -234,5 +246,29 @@ export function fetchCatalog(): Promise<CatalogEntry[]> {
   return fetch("api/codex/catalog", { cache: "no-store" }).then((r) => {
     if (!r.ok) throw new Error("catalog http " + String(r.status));
     return r.json() as Promise<CatalogEntry[]>;
+  });
+}
+
+export interface HistoryPoint {
+  t: number;
+  fillPct: number;
+  turnIn: number;
+  taskIn: number;
+  rollIn: number;
+  lim5h: number | null;
+  limWeek: number | null;
+  compaction: number;
+}
+
+export interface HistoryResponse {
+  available: boolean;
+  range?: string;
+  points: HistoryPoint[];
+}
+
+export function fetchHistory(range: "day" | "week"): Promise<HistoryResponse> {
+  return fetch("api/history?range=" + range, { cache: "no-store" }).then((r) => {
+    if (!r.ok) throw new Error("history http " + String(r.status));
+    return r.json() as Promise<HistoryResponse>;
   });
 }

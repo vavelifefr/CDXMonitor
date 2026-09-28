@@ -18,6 +18,10 @@
 <body>
 <div class="wrap">
   <h1>CDXMonitor <span class="muted">E2 stub (SSE live)</span></h1>
+  <div id="deadCard" style="display:none;border:1px solid #f85149;border-radius:6px;padding:8px;margin-bottom:8px">
+    <div><b>Сервер остановлен.</b> Файловые версии:</div>
+    <div id="deadLinks"></div>
+  </div>
   <div id="sse" class="muted">подключение…</div>
   <div class="row"><span>Модель</span><b id="model">—</b></div>
   <div class="row"><span>Контекст</span><b id="ctx">—</b></div>
@@ -74,10 +78,45 @@
       var links = document.querySelectorAll('a[href^="file:///"]');
       for (var i = 0; i < links.length; i++) {
         var href = links[i].getAttribute("href");
+        links[i].setAttribute("data-file", href);
         var base = href.split("/").pop().split("?")[0].split("#")[0];
         if (names[base]) links[i].setAttribute("href", base);
       }
     }
+  } catch (e) {}
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  try {
+    if (window.location.protocol.indexOf("http") !== 0) return;
+    var fails = 0;
+    var card = document.getElementById("deadCard");
+    var list = document.getElementById("deadLinks");
+    var fill = function () {
+      if (!list || list.getAttribute("data-done")) return;
+      list.setAttribute("data-done", "1");
+      var as = document.querySelectorAll('a[data-file]');
+      var seen = {};
+      for (var i = 0; i < as.length; i++) {
+        var f = as[i].getAttribute("data-file");
+        if (!f || seen[f]) continue;
+        seen[f] = 1;
+        var div = document.createElement("div");
+        var a = document.createElement("a");
+        a.setAttribute("href", f);
+        a.setAttribute("style", "color:#58a6ff");
+        a.textContent = f;
+        div.appendChild(a);
+        list.appendChild(div);
+      }
+    };
+    window.setInterval(function () {
+      fetch("api/health", { cache: "no-store" })
+        .then(function (r) { if (!r.ok) throw new Error("http"); fails = 0; card.style.display = "none"; })
+        .catch(function () { if (++fails === 3) { fill(); card.style.display = "block"; } });
+    }, 3000);
   } catch (e) {}
 })();
 </script>

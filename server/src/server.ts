@@ -25,8 +25,13 @@ import {
   readCatalog,
   threadTurns,
 } from "./codexdb";
+import {
+  openHistory,
+  queryHistory,
+  recordObservation,
+} from "./history";
 
-export const VERSION = "0.6.0";
+export const VERSION = "0.7.0";
 export const DEFAULT_PORT = 8765;
 export const DEFAULT_BIND = "127.0.0.1";
 export const TURNS_CACHE_SECONDS = 30;
@@ -39,6 +44,8 @@ export interface ServerOptions {
   webDir: string;
   rescanSeconds?: number;
   tickMs?: number;
+  dataDir?: string | null;
+  historySeconds?: number;
 }
 
 export interface SessionEntry {
@@ -405,6 +412,20 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   const tickMs = opts.tickMs ?? 5000;
   const tracker = new Tracker(opts.sessionsRoot, opts.explicitFile, rescanSeconds);
   const clients = new Set<http.ServerResponse>();
+  const historyDb = openHistory(opts.dataDir ?? null);
+  const historySeconds = opts.historySeconds ?? 60;
+  const recordTick = (): void => {
+    if (!historyDb) return;
+    try {
+      tracker.tick();
+      recordObservation(historyDb, tracker.state);
+    } catch {
+      // history must never break the server
+    }
+  };
+  if (historyDb) {
+    recordTick();
+  }
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -533,6 +554,26 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       sendJson(res, 200, readCatalog(codexBaseFromSessions(opts.sessionsRoot)));
       return;
     }
+    if (pathname === "/api/history" && req.method === "GET") {
+      if (!historyDb) {
+        sendJson(res, 200, { available: false, points: [] });
+        return;
+      }
+      const range = url.searchParams.get("range") === "week" ? "week" : "day";
+      const spanMs = range === "week" ? 7 * 24 * 3600 * 1000 : 24 * 3600 * 1000;
+      try {
+        tracker.tick();
+        recordObservation(historyDb, tracker.state);
+        sendJson(res, 200, {
+          available: true,
+          range,
+          points: queryHistory(historyDb, Date.now() - spanMs, 300),
+        });
+      } catch {
+        sendJson(res, 200, { available: false, points: [] });
+      }
+      return;
+    }
     if (pathname === "/api/events" && req.method === "GET") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream; charset=utf-8",
@@ -598,6 +639,8 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     }
   }, tickMs);
   timer.unref();
+  const historyTimer = setInterval(recordTick, Math.max(1, historySeconds) * 1000);
+  historyTimer.unref();
 
   return new Promise((resolve, reject) => {
     server.on("error", reject);
@@ -609,6 +652,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         stop: () =>
           new Promise<void>((done) => {
             clearInterval(timer);
+            clearInterval(historyTimer);
             for (const client of clients) {
               try {
                 client.end();
@@ -617,6 +661,11 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
               }
             }
             clients.clear();
+            try {
+              if (historyDb) historyDb.close();
+            } catch {
+              // ignore
+            }
             server.close(() => done());
           }),
       });

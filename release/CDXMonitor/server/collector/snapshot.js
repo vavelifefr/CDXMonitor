@@ -3,11 +3,45 @@
 // `raw` mirrors the reference MonitorState field names 1:1 for A1 verification.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pct = pct;
+exports.resolveLimitSlots = resolveLimitSlots;
 exports.buildSnapshot = buildSnapshot;
 function pct(part, whole) {
     if (!whole)
         return 0;
     return Math.max(0, Math.min(100, (part * 100) / whole));
+}
+// Window-based slot resolution. Plans differ in which limit objects Codex
+// emits (e.g. Pro may carry only a weekly window in `primary`), so slots are
+// assigned by window_minutes, never by primary/secondary position:
+//   240..360 min -> fiveHour; >= 10000 min -> weekly; anything else -> other.
+// Unknown windows are shown generically, never mislabeled.
+function resolveLimitSlots(primary, secondary) {
+    const withSource = (slot, source) => ({
+        usedPercent: slot.usedPercent,
+        windowMinutes: slot.windowMinutes,
+        resetsAt: slot.resetsAt,
+        source,
+    });
+    const prim = withSource(primary, "primary");
+    const sec = withSource(secondary, "secondary");
+    let fiveHour = null;
+    let weekly = null;
+    const other = [];
+    for (const slot of [prim, sec]) {
+        if (slot.usedPercent === null)
+            continue;
+        const w = slot.windowMinutes;
+        if (w !== null && w >= 240 && w <= 360 && fiveHour === null) {
+            fiveHour = slot;
+        }
+        else if (w !== null && w >= 10000 && weekly === null) {
+            weekly = slot;
+        }
+        else {
+            other.push(slot);
+        }
+    }
+    return { fiveHour, weekly, other };
 }
 function buildSnapshot(state) {
     const fresh = Math.max(0, state.last.input - state.last.cached);
@@ -35,6 +69,7 @@ function buildSnapshot(state) {
         limits: {
             primary: { ...state.primary },
             secondary: { ...state.secondary },
+            slots: resolveLimitSlots({ ...state.primary, source: "primary" }, { ...state.secondary, source: "secondary" }),
             limitName: state.limitName,
             limitId: state.limitId,
             planType: state.planType,

@@ -553,3 +553,78 @@ describe("active session switching", () => {
     });
   });
 });
+
+describe("history recorder", () => {
+  it("records observations and survives restart", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cdx-hist-"));
+    fs.mkdirSync(path.join(root, "sessions"));
+    fs.writeFileSync(
+      path.join(root, "sessions", "rollout-h.jsonl"),
+      toJsonl([
+        sessionMeta({ threadSource: "user", model: "gpt-6-sol" }),
+        usageRecord({ input: 1000, cached: 800, output: 100, reasoning: 20 }),
+      ]),
+      "utf8",
+    );
+    const webDir = path.resolve(__dirname, "..", "..", "web");
+    const dataDir = path.join(root, "data");
+    const first = await startServer({
+      port: 0,
+      bind: "127.0.0.1",
+      sessionsRoot: path.join(root, "sessions"),
+      explicitFile: null,
+      webDir,
+      dataDir,
+      historySeconds: 1,
+    });
+    const url = "http://127.0.0.1:" + String(first.port);
+    try {
+      const deadline = Date.now() + 15000;
+      let n = 0;
+      while (Date.now() < deadline) {
+        const body = (await (await fetch(url + "/api/history?range=day")).json()) as {
+          available: boolean;
+          points: Array<{ fillPct: number }>;
+        };
+        n = body.points.length;
+        if (n >= 2) break;
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      assert.ok(n >= 2);
+      const day = (await (await fetch(url + "/api/history?range=day")).json()) as {
+        points: Array<{ turnIn: number }>;
+      };
+      assert.ok(day.points[0]!.turnIn === 1000);
+    } finally {
+      await first.stop();
+    }
+    // Restart on the same data dir: history persists without new ticks.
+    const second = await startServer({
+      port: 0,
+      bind: "127.0.0.1",
+      sessionsRoot: path.join(root, "sessions"),
+      explicitFile: null,
+      webDir,
+      dataDir,
+      historySeconds: 3600,
+    });
+    try {
+      const url2 = "http://127.0.0.1:" + String(second.port);
+      const body = (await (await fetch(url2 + "/api/history?range=day")).json()) as {
+        available: boolean;
+        points: Array<unknown>;
+      };
+      assert.equal(body.available, true);
+      assert.ok(body.points.length >= 2);
+    } finally {
+      await second.stop();
+    }
+  });
+
+  it("reports unavailable without data dir", async () => {
+    const res = await fetch(base + "/api/history?range=week");
+    const body = (await res.json()) as { available: boolean; points: Array<unknown> };
+    assert.equal(body.available, false);
+    assert.deepEqual(body.points, []);
+  });
+});

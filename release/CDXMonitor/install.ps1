@@ -198,3 +198,13 @@ if ($installPlugin) {
         Write-Output "WARNING: plugin sources missing in package, skipped."
     }
 }
+
+# Open the install folder, unless this is a non-interactive (-Force) run.
+if (-not $Force) {
+    try {
+        Start-Process -FilePath "explorer.exe" -ArgumentList $Target
+    }
+    catch {
+        Write-Output ("WARNING: could not open install folder: " + $_.Exception.Message)
+    }
+}

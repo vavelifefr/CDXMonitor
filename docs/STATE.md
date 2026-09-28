@@ -101,6 +101,19 @@ node_modules/dist/web-app). Remote `origin` → `https://github.com/vavelifefr/C
 - Push невозможен: репозитория на GitHub еще нет (404), создать его без gh/токена не могу.
 Жду создания пустого `CDXMonitor` в `vavelifefr`, затем `git push -u origin main`.
 
+## Релиз v0.7.0 (2026-09-28)
+
+E5: собственная история — SQLite `data/cdxmonitor.sqlite`, запись каждые 60 c + сразу
+при старте, ретеншн 30 дней; `/api/history?range=day|week` (≤300 точек, null-лимиты честные);
+вкладка History (переключатель периода, SVG-график fill + weekly, сводка). Тесты: запись,
+переживание рестарта, `available:false` без data-dir. Живая проверка — следующим smoke.
+- Лимиты по окну (slots): fiveHour 240–360 мин, weekly ≥10000, остальное — generic-карточки;
+позиция primary/secondary больше не решает. Причина: на Pro-аккаунте weekly едет в primary
+(локально не воспроизводится — только обычный аккаунт; проверяется пользователем на Pro).
+- Мертвые серверные вкладки: shim хранит data-file; boot показывает fallback-карточку с
+файловыми ссылками после 5 fails; help/stub — баннер после 3 fails (опрос только когда served).
+- Установщик открывает папку по завершении (кроме -Force).
+
 ## Релиз v0.6.0 (2026-09-28)
 
 E4: выбор активной сессии (POST /api/active, pin, валидация basename) + суммарный вид

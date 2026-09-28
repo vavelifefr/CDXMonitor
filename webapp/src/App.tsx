@@ -7,6 +7,7 @@ import {
   fetchCodexStatus,
   fetchCodexThreads,
   fetchCodexTurns,
+  fetchHistory,
   fetchReviews,
   fetchRollouts,
   fetchSnapshot,
@@ -16,6 +17,8 @@ import {
   type ActivityResponse,
   type AggregateResponse,
   type CatalogEntry,
+  type HistoryPoint,
+  type LimitSlot,
   type CodexProject,
   type CodexStatus,
   type CodexThread,
@@ -38,6 +41,7 @@ type Tab =
   | "turns"
   | "tools"
   | "sessions"
+  | "history"
   | "codexdb";
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -47,6 +51,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: "turns", label: "Turns" },
   { id: "tools", label: "Tools" },
   { id: "sessions", label: "Sessions" },
+  { id: "history", label: "History" },
   { id: "codexdb", label: "CodexDB" },
 ];
 
@@ -62,12 +67,14 @@ function LimitCard({
   windowMin,
   resetsAt,
   now,
+  source,
 }: {
   title: string;
   used: number | null;
   windowMin: number | null;
   resetsAt: number | null;
   now: number;
+  source?: string;
 }) {
   if (used === null) {
     return (
@@ -89,6 +96,7 @@ function LimitCard({
         value={left !== null ? fmtAge(left) : <NA />}
       />
       <Row label="Сброс в" value={fmtClock(resetsAt)} />
+      {source && <Row label="Источник" value={<span className="muted">{source}</span>} />}
     </div>
   );
 }
@@ -121,13 +129,10 @@ function Overview({ s, now }: { s: Snapshot; now: number }) {
       </div>
       <div className="card">
         <div className="cardTitle">Лимиты</div>
-        <div>
-          5h: {s.limits.primary.usedPercent !== null ? s.limits.primary.usedPercent + "%" : "N/A"} ·
-          weekly:{" "}
-          {s.limits.secondary.usedPercent !== null ? s.limits.secondary.usedPercent + "%" : "N/A"}
-        </div>
-        {s.limits.primary.usedPercent !== null && <Bar pct={s.limits.primary.usedPercent} />}
-        {s.limits.secondary.usedPercent !== null && <Bar pct={s.limits.secondary.usedPercent} />}
+        <LimitMini label="5h" slot={s.limits.slots.fiveHour} />
+        <LimitMini label="weekly" slot={s.limits.slots.weekly} />
+      </div>
+      <div className="card">
         <Row
           label="Задачи"
           value={
@@ -194,23 +199,56 @@ function TokensTab({ s }: { s: Snapshot }) {
   );
 }
 
-function LimitsTab({ s, now }: { s: Snapshot; now: number }) {
+function LimitMini({ label, slot }: { label: string; slot: LimitSlot | null }) {
   return (
     <div>
-      <LimitCard
-        title="Primary (5h)"
-        used={s.limits.primary.usedPercent}
-        windowMin={s.limits.primary.windowMinutes}
-        resetsAt={s.limits.primary.resetsAt}
-        now={now}
-      />
-      <LimitCard
-        title="Secondary (weekly)"
-        used={s.limits.secondary.usedPercent}
-        windowMin={s.limits.secondary.windowMinutes}
-        resetsAt={s.limits.secondary.resetsAt}
-        now={now}
-      />
+      <div>
+        {label}: {slot && slot.usedPercent !== null ? slot.usedPercent + "%" : "N/A"}
+      </div>
+      {slot && slot.usedPercent !== null && <Bar pct={slot.usedPercent} />}
+    </div>
+  );
+}
+
+function LimitsTab({ s, now }: { s: Snapshot; now: number }) {
+  const slots = s.limits.slots;
+  return (
+    <div>
+      {slots.fiveHour ? (
+        <LimitCard
+          title="Лимит 5h"
+          used={slots.fiveHour.usedPercent}
+          windowMin={slots.fiveHour.windowMinutes}
+          resetsAt={slots.fiveHour.resetsAt}
+          now={now}
+          source={slots.fiveHour.source}
+        />
+      ) : (
+        <LimitCard title="Лимит 5h" used={null} windowMin={null} resetsAt={null} now={now} />
+      )}
+      {slots.weekly ? (
+        <LimitCard
+          title="Лимит weekly"
+          used={slots.weekly.usedPercent}
+          windowMin={slots.weekly.windowMinutes}
+          resetsAt={slots.weekly.resetsAt}
+          now={now}
+          source={slots.weekly.source}
+        />
+      ) : (
+        <LimitCard title="Лимит weekly" used={null} windowMin={null} resetsAt={null} now={now} />
+      )}
+      {slots.other.map((o, i) => (
+        <LimitCard
+          key={i}
+          title={"Лимит (окно " + String(o.windowMinutes ?? "?") + " мин)"}
+          used={o.usedPercent}
+          windowMin={o.windowMinutes}
+          resetsAt={o.resetsAt}
+          now={now}
+          source={o.source}
+        />
+      ))}
       <div className="card">
         <Row label="Лимит" value={s.limits.limitName || <NA />} />
         <Row label="Limit ID" value={s.limits.limitId || <NA />} />
@@ -536,6 +574,78 @@ function CodexDBTab() {
   );
 }
 
+function HistoryTab() {
+  const [range, setRange] = useState<"day" | "week">("day");
+  const [points, setPoints] = useState<HistoryPoint[] | null>(null);
+  const [available, setAvailable] = useState<boolean>(true);
+  const load = (r: "day" | "week") => {
+    fetchHistory(r)
+      .then((h) => {
+        setAvailable(h.available);
+        setPoints(h.points);
+      })
+      .catch(() => setPoints([]));
+  };
+  useEffect(() => {
+    load(range);
+  }, [range]);
+  const W = 400;
+  const H = 90;
+  const line = (get: (p: HistoryPoint) => number | null, max: number, color: string) => {
+    if (!points || points.length === 0) return null;
+    const t0 = points[0]!.t;
+    const t1 = points[points.length - 1]!.t || t0 + 1;
+    const d = points
+      .map((p) => {
+        const v = get(p);
+        if (v === null) return null;
+        const x = ((p.t - t0) / (t1 - t0)) * W;
+        const y = H - Math.max(0, Math.min(1, v / max)) * (H - 6) - 3;
+        return x.toFixed(1) + "," + y.toFixed(1);
+      })
+      .filter((s): s is string => s !== null)
+      .join(" ");
+    if (!d) return null;
+    return <polyline points={d} fill="none" stroke={color} strokeWidth="1.5" />;
+  };
+  const maxFill = points && points.length > 0 ? Math.max(...points.map((p) => p.fillPct), 1) : 1;
+  const maxRoll = points && points.length > 0 ? Math.max(...points.map((p) => p.rollIn), 1) : 1;
+  return (
+    <div>
+      <div className="card">
+        <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+          {(["day", "week"] as const).map((r) => (
+            <button key={r} className={range === r ? "tab active" : "tab"} onClick={() => setRange(r)}>
+              {r === "day" ? "День" : "Неделя"}
+            </button>
+          ))}
+        </div>
+        {!available && <span className="muted">История выключена (нет data-dir у сервера).</span>}
+        {available && !points && <span className="muted">Загрузка…</span>}
+        {available && points && points.length === 0 && <span className="muted">пока нет точек</span>}
+        {available && points && points.length > 0 && (
+          <div>
+            <svg viewBox={"0 0 " + W + " " + H} style={{ width: "100%", display: "block" }}>
+              {line((p) => p.fillPct, 100, "#1f6feb")}
+              {line((p) => p.limWeek, 100, "#9e6a03")}
+            </svg>
+            <div className="muted" style={{ fontSize: 11 }}>
+              <span style={{ color: "#1f6feb" }}>— заполнение %</span> ·{" "}
+              <span style={{ color: "#9e6a03" }}>— weekly %</span>
+            </div>
+            <Row label="Точек" value={String(points.length)} />
+            <Row label="Макс. заполнение" value={maxFill.toFixed(1) + "%"} />
+            <Row
+              label="ROLLOUT in (мин→макс)"
+              value={fmtTokens(points[0]!.rollIn) + " → " + fmtTokens(points[points.length - 1]!.rollIn) + " (макс " + fmtTokens(maxRoll) + ")"}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -590,6 +700,7 @@ export default function App() {
       {tab === "turns" && <TurnsTab now={now} />}
       {tab === "tools" && <ToolsTab />}
       {tab === "sessions" && <SessionsTab />}
+      {tab === "history" && <HistoryTab />}
       {tab === "codexdb" && <CodexDBTab />}
       <div className="foot">
         CDXMonitor · <a href="help.html">Помощь</a> ·{" "}
