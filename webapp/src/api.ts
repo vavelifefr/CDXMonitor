@@ -135,6 +135,31 @@ export function fetchRollouts(): Promise<RolloutSession[]> {
   });
 }
 
+export function setActiveSession(id: string): Promise<{ ok: boolean; file: string | null }> {
+  return fetch("api/active", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).then((r) => {
+    if (!r.ok) throw new Error("activate http " + String(r.status));
+    return r.json() as Promise<{ ok: boolean; file: string | null }>;
+  });
+}
+
+export interface AggregateResponse {
+  updatedAt: string;
+  files: Array<{ id: string; input: number; output: number; events: number }>;
+  totalInput: number;
+  totalOutput: number;
+}
+
+export function fetchAggregate(refresh: boolean): Promise<AggregateResponse> {
+  return fetch("api/aggregate" + (refresh ? "?refresh=1" : ""), { cache: "no-store" }).then((r) => {
+    if (!r.ok) throw new Error("aggregate http " + String(r.status));
+    return r.json() as Promise<AggregateResponse>;
+  });
+}
+
 export interface CodexStatus {
   baseDir: string;
   files: Record<string, boolean>;

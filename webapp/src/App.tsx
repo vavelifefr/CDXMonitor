@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from "react";
 import {
   fetchActivity,
+  fetchAggregate,
   fetchCatalog,
   fetchCodexProjects,
   fetchCodexStatus,
@@ -10,8 +11,10 @@ import {
   fetchRollouts,
   fetchSnapshot,
   fetchTurns,
+  setActiveSession,
   subscribeSnapshots,
   type ActivityResponse,
+  type AggregateResponse,
   type CatalogEntry,
   type CodexProject,
   type CodexStatus,
@@ -354,10 +357,15 @@ function ToolsTab() {
 function SessionsTab() {
   const [rollouts, setRollouts] = useState<RolloutSession[] | null>(null);
   const [series, setSeries] = useState<Array<{ t: number; input: number }>>([]);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [aggregate, setAggregate] = useState<AggregateResponse | null>(null);
   const load = () => {
     fetchRollouts().then(setRollouts).catch(() => undefined);
     fetchActivity()
       .then((a) => setSeries(a.series))
+      .catch(() => undefined);
+    fetchSnapshot()
+      .then((s) => setActiveFile(s.file ? s.file.split(/[\\/]/).pop() ?? null : null))
       .catch(() => undefined);
   };
   useEffect(() => {
@@ -365,10 +373,33 @@ function SessionsTab() {
     const timer = window.setInterval(load, 30000);
     return () => window.clearInterval(timer);
   }, []);
+  const choose = (id: string) => {
+    setActiveSession(id)
+      .then((r) => setActiveFile(r.file))
+      .catch(() => undefined);
+  };
   const points = series.slice(-120);
   const max = points.reduce((m, p) => Math.max(m, p.input), 1);
   return (
     <div>
+      <div className="card">
+        <div className="cardTitle">Суммарно по primary-сессиям</div>
+        {!aggregate && (
+          <button className="tab" style={{ width: "100%" }} onClick={() => {
+            fetchAggregate(true).then(setAggregate).catch(() => undefined);
+          }}>
+            Посчитать
+          </button>
+        )}
+        {aggregate && (
+          <div>
+            <Row label="Всего in" value={fmtTokens(aggregate.totalInput)} />
+            <Row label="Всего out" value={fmtTokens(aggregate.totalOutput)} />
+            <Row label="Файлов" value={String(aggregate.files.length)} />
+            <div className="muted" style={{ fontSize: 11 }}>посчитано {aggregate.updatedAt}</div>
+          </div>
+        )}
+      </div>
       <div className="card">
         <div className="cardTitle">Временная ось активной сессии (контекст)</div>
         {points.length === 0 && <span className="muted">пока нет событий</span>}
@@ -390,15 +421,18 @@ function SessionsTab() {
         <RefreshLine text={"файлов: " + String(rollouts ? rollouts.length : 0)} onRefresh={load} />
         {rollouts &&
           rollouts.slice(0, 20).map((r) => (
-            <Row
-              key={r.id}
-              label={shortId(r.id)}
-              value={
-                <span>
-                  {r.kind === "auxiliary" ? <Badge kind="aux" /> : null} {fmtTokens(r.size).replace("k", "K")}
-                </span>
-              }
-            />
+            <div key={r.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, borderTop: "1px solid #21262d", padding: "3px 0" }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.id}>
+                {r.kind === "auxiliary" ? <Badge kind="aux" /> : null} {shortId(r.id)}
+              </span>
+              {activeFile === r.id ? (
+                <b style={{ color: "#3fb950", fontSize: 11 }}>активна</b>
+              ) : (
+                <button className="tab" style={{ flex: "none", padding: "0 8px", fontSize: 11 }} onClick={() => choose(r.id)}>
+                  Выбрать
+                </button>
+              )}
+            </div>
           ))}
       </div>
     </div>

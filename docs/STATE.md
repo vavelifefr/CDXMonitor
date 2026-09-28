@@ -101,6 +101,12 @@ node_modules/dist/web-app). Remote `origin` → `https://github.com/vavelifefr/C
 - Push невозможен: репозитория на GitHub еще нет (404), создать его без gh/токена не могу.
 Жду создания пустого `CDXMonitor` в `vavelifefr`, затем `git push -u origin main`.
 
+## Релиз v0.6.0 (2026-09-28)
+
+E4: выбор активной сессии (POST /api/active, pin, валидация basename) + суммарный вид
+(GET /api/aggregate по primary/unknown, кэш). UI Sessions: кнопка «Выбрать», бейдж активной,
+суммарный блок. Проверено живьем: switch + pinned, агрегат 6 файлов. Тесты 45/45.
+
 ## Релиз v0.5.0 (2026-09-28)
 
 Состав: E1–E3, boot/Statistic/help, cdxm, скрытый запуск, lock-файл, переносимый пакет,

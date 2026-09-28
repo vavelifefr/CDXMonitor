@@ -48,6 +48,7 @@ exports.TURNS_CACHE_SECONDS = exports.DEFAULT_BIND = exports.DEFAULT_PORT = expo
 exports.buildTurnsView = buildTurnsView;
 exports.scanFileUsage = scanFileUsage;
 exports.buildReviewsView = buildReviewsView;
+exports.buildAggregateView = buildAggregateView;
 exports.listSessions = listSessions;
 exports.startServer = startServer;
 const fs = __importStar(require("fs"));
@@ -58,7 +59,7 @@ const classify_1 = require("./collector/classify");
 const snapshot_1 = require("./collector/snapshot");
 const tail_1 = require("./collector/tail");
 const codexdb_1 = require("./codexdb");
-exports.VERSION = "0.5.0";
+exports.VERSION = "0.6.0";
 exports.DEFAULT_PORT = 8765;
 exports.DEFAULT_BIND = "127.0.0.1";
 exports.TURNS_CACHE_SECONDS = 30;
@@ -107,7 +108,7 @@ function buildTurnsView(state) {
 // Sums token_usage_record usage per file. Streaming + needle prefilter, so
 // even hundred-MB auxiliary rollouts scan in seconds. On demand only.
 function scanFileUsage(filePath) {
-    const acc = { input: 0, output: 0, events: 0 };
+    const acc = { input: 0, cached: 0, output: 0, reasoning: 0, events: 0 };
     let fd;
     try {
         fd = fs.openSync(filePath, "r");
@@ -144,10 +145,11 @@ function scanFileUsage(filePath) {
                     if (typeof usage !== "object" || usage === null)
                         continue;
                     const u = usage;
-                    const input = typeof u["input_tokens"] === "number" ? u["input_tokens"] : 0;
-                    const output = typeof u["output_tokens"] === "number" ? u["output_tokens"] : 0;
-                    acc.input += input;
-                    acc.output += output;
+                    const num = (k) => typeof u[k] === "number" ? u[k] : 0;
+                    acc.input += num("input_tokens");
+                    acc.cached += num("cached_input_tokens");
+                    acc.output += num("output_tokens");
+                    acc.reasoning += num("reasoning_output_tokens");
                     acc.events += 1;
                 }
                 catch {
@@ -169,10 +171,12 @@ function scanFileUsage(filePath) {
     }
     return acc;
 }
-function buildReviewsView(sessionsRoot) {
+function buildUsageView(sessionsRoot, kinds) {
     const files = [];
     let totalInput = 0;
+    let totalCached = 0;
     let totalOutput = 0;
+    let totalReasoning = 0;
     for (const full of walkRollouts(sessionsRoot)) {
         let kind;
         try {
@@ -181,20 +185,37 @@ function buildReviewsView(sessionsRoot) {
         catch {
             continue;
         }
-        if (kind !== "auxiliary")
+        if (!kinds.includes(kind))
             continue;
         const u = scanFileUsage(full);
-        files.push({ id: path.basename(full), input: u.input, output: u.output, events: u.events });
+        files.push({
+            id: path.basename(full),
+            input: u.input,
+            cached: u.cached,
+            output: u.output,
+            reasoning: u.reasoning,
+            events: u.events,
+        });
         totalInput += u.input;
+        totalCached += u.cached;
         totalOutput += u.output;
+        totalReasoning += u.reasoning;
     }
     files.sort((a, b) => b.input - a.input);
     return {
         updatedAt: new Date().toISOString(),
         files,
         totalInput,
+        totalCached,
         totalOutput,
+        totalReasoning,
     };
+}
+function buildReviewsView(sessionsRoot) {
+    return buildUsageView(sessionsRoot, ["auxiliary"]);
+}
+function buildAggregateView(sessionsRoot) {
+    return buildUsageView(sessionsRoot, ["primary", "unknown"]);
 }
 function listSessions(sessionsRoot) {
     const entries = [];
@@ -226,6 +247,8 @@ class Tracker {
     turnsCache = [];
     turnsAt = 0;
     reviewsCache = null;
+    aggregateCache = null;
+    pinned = null;
     constructor(sessionsRoot, explicitFile, rescanSeconds) {
         this.sessionsRoot = sessionsRoot;
         this.explicitFile = explicitFile;
@@ -234,19 +257,49 @@ class Tracker {
         if (this.state.file === null && this.explicitFile) {
             this.state.file = this.explicitFile;
         }
+        if (this.explicitFile) {
+            this.pinned = this.state.file;
+        }
+    }
+    switchTo(id) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/.test(id))
+            return false;
+        let target = null;
+        for (const full of walkRollouts(this.sessionsRoot)) {
+            if (path.basename(full) === id) {
+                target = full;
+                break;
+            }
+        }
+        if (target === null || target === this.state.file)
+            return target !== null;
+        this.state = (0, types_1.initialState)();
+        this.cursor = (0, tail_1.newCursor)();
+        (0, tail_1.scanFullFile)(target, this.state, this.cursor);
+        this.state.file = target;
+        this.pinned = target;
+        this.turnsCache = [];
+        this.turnsAt = 0;
+        this.lastScan = Date.now() / 1000;
+        return true;
     }
     tick(force = false) {
         const now = Date.now() / 1000;
         if (force || now - this.lastScan >= this.rescanSeconds) {
             this.lastScan = now;
-            const newest = (0, classify_1.newestRollout)(this.sessionsRoot, this.explicitFile);
-            if (newest !== null && newest !== this.state.file) {
-                this.state = (0, types_1.initialState)();
-                this.cursor = (0, tail_1.newCursor)();
-                (0, tail_1.scanFullFile)(newest, this.state, this.cursor);
-                this.state.file = newest;
-                this.turnsCache = [];
-                this.turnsAt = 0;
+            if (this.pinned !== null && !fs.existsSync(this.pinned)) {
+                this.pinned = null;
+            }
+            if (this.pinned === null) {
+                const newest = (0, classify_1.newestRollout)(this.sessionsRoot, this.explicitFile);
+                if (newest !== null && newest !== this.state.file) {
+                    this.state = (0, types_1.initialState)();
+                    this.cursor = (0, tail_1.newCursor)();
+                    (0, tail_1.scanFullFile)(newest, this.state, this.cursor);
+                    this.state.file = newest;
+                    this.turnsCache = [];
+                    this.turnsAt = 0;
+                }
             }
         }
         if (this.state.file !== null) {
@@ -340,6 +393,7 @@ function startServer(opts) {
                 status: "ok",
                 version: exports.VERSION,
                 file: tracker.state.file ? path.basename(tracker.state.file) : null,
+                pinned: tracker.pinned !== null,
                 uptimeSec: Math.floor((Date.now() - tracker.startedAt) / 1000),
             });
             return;
@@ -381,6 +435,52 @@ function startServer(opts) {
                 tracker.reviewsCache = buildReviewsView(opts.sessionsRoot);
             }
             sendJson(res, 200, tracker.reviewsCache);
+            return;
+        }
+        if (pathname === "/api/aggregate" && req.method === "GET") {
+            const force = url.searchParams.get("refresh") === "1";
+            if (force || tracker.aggregateCache === null) {
+                tracker.aggregateCache = buildAggregateView(opts.sessionsRoot);
+            }
+            sendJson(res, 200, tracker.aggregateCache);
+            return;
+        }
+        if (pathname === "/api/active" && req.method === "POST") {
+            let body = "";
+            req.on("data", (chunk) => {
+                body += chunk.toString("utf8");
+                if (body.length > 4096) {
+                    req.destroy();
+                }
+            });
+            req.on("end", () => {
+                try {
+                    const parsed = JSON.parse(body || "{}");
+                    const id = typeof parsed === "object" && parsed !== null
+                        ? String(parsed["id"] ?? "")
+                        : "";
+                    if (tracker.switchTo(id)) {
+                        sendJson(res, 200, {
+                            ok: true,
+                            file: tracker.state.file ? path.basename(tracker.state.file) : null,
+                        });
+                    }
+                    else {
+                        sendJson(res, 404, { ok: false, error: "unknown session id" });
+                    }
+                }
+                catch {
+                    sendJson(res, 400, { ok: false, error: "bad request" });
+                }
+            });
+            req.on("error", () => {
+                try {
+                    sendJson(res, 400, { ok: false, error: "bad request" });
+                }
+                catch {
+                    // ignore
+                }
+            });
             return;
         }
         if (pathname === "/api/codex/status" && req.method === "GET") {

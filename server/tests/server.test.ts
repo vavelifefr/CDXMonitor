@@ -487,3 +487,69 @@ describe("codexdb adapter", () => {
     assert.equal(body[0]?.contextWindow, 272000);
   });
 });
+
+describe("active session switching", () => {
+  it("rejects bad ids and unknown files", async () => {
+    for (const bad of ["../x.jsonl", "nope.jsonl", ""] ) {
+      const res = await fetch(base + "/api/active", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: bad }),
+      });
+      assert.equal(res.status, 404);
+    }
+    const res = await fetch(base + "/api/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{broken",
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it("switches the active file and aggregates primaries", async () => {
+    fs.writeFileSync(
+      path.join(sessionsDir, "rollout-second.jsonl"),
+      toJsonl([
+        sessionMeta({ threadSource: "user", model: "gpt-6-luna" }),
+        usageRecord({ turnId: "s1", input: 2000, cached: 100, output: 200, reasoning: 10 }),
+      ]),
+      "utf8",
+    );
+    const res = await fetch(base + "/api/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "rollout-second.jsonl" }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { ok: boolean; file: string };
+    assert.equal(body.ok, true);
+    assert.equal(body.file, "rollout-second.jsonl");
+    const health = (await (await fetch(base + "/api/health")).json()) as {
+      file: string;
+      pinned: boolean;
+    };
+    assert.equal(health.file, "rollout-second.jsonl");
+    assert.equal(health.pinned, true);
+    const snap = (await (await fetch(base + "/api/snapshot")).json()) as {
+      model: string;
+      turn: { input: number };
+    };
+    assert.equal(snap.model, "gpt-6-luna");
+    assert.equal(snap.turn.input, 2000);
+
+    const agg = (await (await fetch(base + "/api/aggregate?refresh=1")).json()) as {
+      files: Array<{ id: string }>;
+      totalInput: number;
+    };
+    const ids = agg.files.map((f) => f.id).sort();
+    assert.deepEqual(ids, ["rollout-second.jsonl", "rollout-test.jsonl"]);
+    assert.equal(agg.totalInput, 3000);
+
+    // Restore the original active file for a clean final state.
+    await fetch(base + "/api/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "rollout-test.jsonl" }),
+    });
+  });
+});

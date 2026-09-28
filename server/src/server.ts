@@ -26,7 +26,7 @@ import {
   threadTurns,
 } from "./codexdb";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 export const DEFAULT_PORT = 8765;
 export const DEFAULT_BIND = "127.0.0.1";
 export const TURNS_CACHE_SECONDS = 30;
@@ -107,14 +107,22 @@ export function buildTurnsView(state: CollectorState): TurnView[] {
 export interface ReviewUsage {
   id: string;
   input: number;
+  cached: number;
   output: number;
+  reasoning: number;
   events: number;
 }
 
 // Sums token_usage_record usage per file. Streaming + needle prefilter, so
 // even hundred-MB auxiliary rollouts scan in seconds. On demand only.
-export function scanFileUsage(filePath: string): { input: number; output: number; events: number } {
-  const acc = { input: 0, output: 0, events: 0 };
+export function scanFileUsage(filePath: string): {
+  input: number;
+  cached: number;
+  output: number;
+  reasoning: number;
+  events: number;
+} {
+  const acc = { input: 0, cached: 0, output: 0, reasoning: 0, events: 0 };
   let fd: number;
   try {
     fd = fs.openSync(filePath, "r");
@@ -145,10 +153,12 @@ export function scanFileUsage(filePath: string): { input: number; output: number
           const usage = (payload as Record<string, unknown>)["usage"];
           if (typeof usage !== "object" || usage === null) continue;
           const u = usage as Record<string, unknown>;
-          const input = typeof u["input_tokens"] === "number" ? u["input_tokens"] as number : 0;
-          const output = typeof u["output_tokens"] === "number" ? u["output_tokens"] as number : 0;
-          acc.input += input;
-          acc.output += output;
+          const num = (k: string): number =>
+            typeof u[k] === "number" ? (u[k] as number) : 0;
+          acc.input += num("input_tokens");
+          acc.cached += num("cached_input_tokens");
+          acc.output += num("output_tokens");
+          acc.reasoning += num("reasoning_output_tokens");
           acc.events += 1;
         } catch {
           // ignore malformed lines
@@ -171,13 +181,20 @@ export interface ReviewsView {
   updatedAt: string;
   files: ReviewUsage[];
   totalInput: number;
+  totalCached: number;
   totalOutput: number;
+  totalReasoning: number;
 }
 
-export function buildReviewsView(sessionsRoot: string): ReviewsView {
+function buildUsageView(
+  sessionsRoot: string,
+  kinds: string[],
+): ReviewsView {
   const files: ReviewUsage[] = [];
   let totalInput = 0;
+  let totalCached = 0;
   let totalOutput = 0;
+  let totalReasoning = 0;
   for (const full of walkRollouts(sessionsRoot)) {
     let kind: string;
     try {
@@ -185,19 +202,38 @@ export function buildReviewsView(sessionsRoot: string): ReviewsView {
     } catch {
       continue;
     }
-    if (kind !== "auxiliary") continue;
+    if (!kinds.includes(kind)) continue;
     const u = scanFileUsage(full);
-    files.push({ id: path.basename(full), input: u.input, output: u.output, events: u.events });
+    files.push({
+      id: path.basename(full),
+      input: u.input,
+      cached: u.cached,
+      output: u.output,
+      reasoning: u.reasoning,
+      events: u.events,
+    });
     totalInput += u.input;
+    totalCached += u.cached;
     totalOutput += u.output;
+    totalReasoning += u.reasoning;
   }
   files.sort((a, b) => b.input - a.input);
   return {
     updatedAt: new Date().toISOString(),
     files,
     totalInput,
+    totalCached,
     totalOutput,
+    totalReasoning,
   };
+}
+
+export function buildReviewsView(sessionsRoot: string): ReviewsView {
+  return buildUsageView(sessionsRoot, ["auxiliary"]);
+}
+
+export function buildAggregateView(sessionsRoot: string): ReviewsView {
+  return buildUsageView(sessionsRoot, ["primary", "unknown"]);
 }
 
 export function listSessions(sessionsRoot: string): SessionEntry[] {
@@ -227,6 +263,8 @@ class Tracker {
   turnsCache: TurnView[] = [];
   turnsAt = 0;
   reviewsCache: ReviewsView | null = null;
+  aggregateCache: ReviewsView | null = null;
+  pinned: string | null = null;
 
   constructor(
     private sessionsRoot: string,
@@ -237,20 +275,49 @@ class Tracker {
     if (this.state.file === null && this.explicitFile) {
       this.state.file = this.explicitFile;
     }
+    if (this.explicitFile) {
+      this.pinned = this.state.file;
+    }
+  }
+
+  switchTo(id: string): boolean {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/.test(id)) return false;
+    let target: string | null = null;
+    for (const full of walkRollouts(this.sessionsRoot)) {
+      if (path.basename(full) === id) {
+        target = full;
+        break;
+      }
+    }
+    if (target === null || target === this.state.file) return target !== null;
+    this.state = initialState();
+    this.cursor = newCursor();
+    scanFullFile(target, this.state, this.cursor);
+    this.state.file = target;
+    this.pinned = target;
+    this.turnsCache = [];
+    this.turnsAt = 0;
+    this.lastScan = Date.now() / 1000;
+    return true;
   }
 
   tick(force = false): void {
     const now = Date.now() / 1000;
     if (force || now - this.lastScan >= this.rescanSeconds) {
       this.lastScan = now;
-      const newest = newestRollout(this.sessionsRoot, this.explicitFile);
-      if (newest !== null && newest !== this.state.file) {
-        this.state = initialState();
-        this.cursor = newCursor();
-        scanFullFile(newest, this.state, this.cursor);
-        this.state.file = newest;
-        this.turnsCache = [];
-        this.turnsAt = 0;
+      if (this.pinned !== null && !fs.existsSync(this.pinned)) {
+        this.pinned = null;
+      }
+      if (this.pinned === null) {
+        const newest = newestRollout(this.sessionsRoot, this.explicitFile);
+        if (newest !== null && newest !== this.state.file) {
+          this.state = initialState();
+          this.cursor = newCursor();
+          scanFullFile(newest, this.state, this.cursor);
+          this.state.file = newest;
+          this.turnsCache = [];
+          this.turnsAt = 0;
+        }
       }
     }
     if (this.state.file !== null) {
@@ -355,6 +422,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         status: "ok",
         version: VERSION,
         file: tracker.state.file ? path.basename(tracker.state.file) : null,
+        pinned: tracker.pinned !== null,
         uptimeSec: Math.floor((Date.now() - tracker.startedAt) / 1000),
       });
       return;
@@ -396,6 +464,50 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         tracker.reviewsCache = buildReviewsView(opts.sessionsRoot);
       }
       sendJson(res, 200, tracker.reviewsCache);
+      return;
+    }
+    if (pathname === "/api/aggregate" && req.method === "GET") {
+      const force = url.searchParams.get("refresh") === "1";
+      if (force || tracker.aggregateCache === null) {
+        tracker.aggregateCache = buildAggregateView(opts.sessionsRoot);
+      }
+      sendJson(res, 200, tracker.aggregateCache);
+      return;
+    }
+    if (pathname === "/api/active" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString("utf8");
+        if (body.length > 4096) {
+          req.destroy();
+        }
+      });
+      req.on("end", () => {
+        try {
+          const parsed: unknown = JSON.parse(body || "{}");
+          const id =
+            typeof parsed === "object" && parsed !== null
+              ? String((parsed as Record<string, unknown>)["id"] ?? "")
+              : "";
+          if (tracker.switchTo(id)) {
+            sendJson(res, 200, {
+              ok: true,
+              file: tracker.state.file ? path.basename(tracker.state.file) : null,
+            });
+          } else {
+            sendJson(res, 404, { ok: false, error: "unknown session id" });
+          }
+        } catch {
+          sendJson(res, 400, { ok: false, error: "bad request" });
+        }
+      });
+      req.on("error", () => {
+        try {
+          sendJson(res, 400, { ok: false, error: "bad request" });
+        } catch {
+          // ignore
+        }
+      });
       return;
     }
     if (pathname === "/api/codex/status" && req.method === "GET") {
