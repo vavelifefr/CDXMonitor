@@ -1,6 +1,7 @@
 ﻿param(
     [string]$Target = "",
-    [switch]$RemoveData
+    [switch]$RemoveData,
+    [string]$HomeRoot = ""
 )
 # CDXMonitor portable uninstall. Removes only CDXMonitor files.
 # Refuses to run outside a marked install directory. Keeps data\ unless -RemoveData.
@@ -50,4 +51,29 @@ try {
 }
 catch {
     Write-Output ("WARNING: PATH cleanup failed: " + $_.Exception.Message)
+}
+
+# Remove the Codex plugin (best effort): dir + marketplace entry.
+try {
+    $homeRoot = if ($HomeRoot) { $HomeRoot } else { $env:USERPROFILE }
+    $plugDir = Join-Path $homeRoot ".codex\plugins\cdx-monitor"
+    if (Test-Path -LiteralPath $plugDir) {
+        Remove-Item -LiteralPath $plugDir -Recurse -Force
+        Write-Output "Codex plugin removed."
+    }
+    $marketFile = Join-Path $homeRoot ".agents\plugins\marketplace.json"
+    if (Test-Path -LiteralPath $marketFile) {
+        Copy-Item -LiteralPath $marketFile -Destination ($marketFile + ".bak") -Force
+        $market = Get-Content -LiteralPath $marketFile -Encoding UTF8 | ConvertFrom-Json
+        if ($market.plugins) {
+            $market.plugins = @($market.plugins | Where-Object { $_.name -ne "cdx-monitor" })
+            [IO.File]::WriteAllText($marketFile,
+                ($market | ConvertTo-Json -Depth 6),
+                (New-Object System.Text.UTF8Encoding -ArgumentList $false))
+            Write-Output "Codex plugin entry removed from marketplace."
+        }
+    }
+}
+catch {
+    Write-Output ("WARNING: plugin cleanup failed: " + $_.Exception.Message)
 }

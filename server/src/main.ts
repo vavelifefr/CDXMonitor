@@ -114,24 +114,30 @@ function removePidFile(pidFile: string | null): void {
   }
 }
 
-// Single-instance guard per data dir. Node sets SO_REUSEADDR, so on Windows
-// two servers can silently share one port; the lock file makes the second
-// instance fail loudly instead. Stale locks (taskkill /F skips exit hooks)
-// are taken over after a liveness check.
-function acquireLock(dataDir: string | null, port: number): void {
-  if (!dataDir) return;
-  const lockPath = path.join(dataDir, "server.lock");
+// Single-instance guards. Node sets SO_REUSEADDR, so on Windows two servers
+// can silently share one port; lock files make the second instance fail loudly
+// instead. Stale locks (taskkill /F skips exit hooks) are taken over after a
+// liveness check. Guards: per data dir AND global per port (port 0 = ephemeral,
+// no global guard).
+function acquireOneLock(lockPath: string, label: string): void {
+  const dir = path.dirname(lockPath);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // ignore
+  }
+  const release = (): void => {
+    try {
+      if (fs.readFileSync(lockPath, "utf8").trim() === String(process.pid)) {
+        fs.unlinkSync(lockPath);
+      }
+    } catch {
+      // best effort
+    }
+  };
   const claim = (): void => {
     fs.writeFileSync(lockPath, String(process.pid), "utf8");
-    process.on("exit", () => {
-      try {
-        if (fs.readFileSync(lockPath, "utf8").trim() === String(process.pid)) {
-          fs.unlinkSync(lockPath);
-        }
-      } catch {
-        // best effort
-      }
-    });
+    process.on("exit", release);
   };
   try {
     const fd = fs.openSync(lockPath, "wx");
@@ -165,9 +171,21 @@ function acquireLock(dataDir: string | null, port: number): void {
   }
   if (alive) {
     throw new Error(
-      "CDXMonitor already running (pid " + String(owner) + "). Stop it with stop.cmd first.");
+      "CDXMonitor already running (" + label + ", pid " + String(owner) +
+      "). Stop it with stop.cmd first.");
   }
   claim();
+}
+
+function acquireLock(dataDir: string | null, port: number): void {
+  if (dataDir) {
+    acquireOneLock(path.join(dataDir, "server.lock"), "data dir");
+  }
+  if (port !== 0) {
+    const tmp = process.env["TEMP"] ?? process.env["TMP"] ?? ".";
+    acquireOneLock(path.join(tmp, "cdxmonitor-port-" + String(port) + ".lock"),
+      "port " + String(port));
+  }
 }
 
 async function main(): Promise<number> {
@@ -225,7 +243,7 @@ async function main(): Promise<number> {
   }
   const listenMsg =
     "listening on http://" + bind + ":" + String(running.port) + "/ pid=" + String(process.pid);
-  process.stdout.write("CDXMonitor v0.3.0 on http://" + bind + ":" + String(running.port) + "/\n");
+  process.stdout.write("CDXMonitor v0.4.0 on http://" + bind + ":" + String(running.port) + "/\n");
   logLine(logFile, listenMsg);
   const shutdown = () => {
     void running.stop().then(() => {

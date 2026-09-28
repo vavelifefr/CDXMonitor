@@ -14,7 +14,7 @@ import { classifyRollout, newestRollout } from "./collector/classify";
 import { buildSnapshot } from "./collector/snapshot";
 import { newCursor, readNew, scanFullFile, TailCursor } from "./collector/tail";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 export const DEFAULT_PORT = 8765;
 export const DEFAULT_BIND = "127.0.0.1";
 

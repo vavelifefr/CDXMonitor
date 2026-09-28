@@ -126,7 +126,24 @@ Codex (действие запускает <code>start.cmd</code> во встр�
 Требуется Node.js 24+ в PATH. Вкладка с локальным адресом может не восстанавливаться после
 перезапуска Codex — тогда откройте адрес заново.</p>
 
-<p><a href="boot.html">Стартовая страница</a> · <span id="monWrap"><a id="monLink" href="/">Монитор</a></span> · версия 0.3.0</p>
+<h2>10. Плагин Codex: статистика и открытие из чата</h2>
+<p>Установщик (с вашего согласия) кладет плагин в <code>%USERPROFILE%\.codex\plugins\cdx-monitor</code>
+и регистрирует его в персональном marketplace. После рестарта Codex доступны:</p>
+<ul>
+  <li><code>$cdx-stats</code> — таблица текущего снапшота прямо в чате (нужен запущенный сервер);</li>
+  <li><code>$cdx-open</code> — открыть монитор в Chrome (фолбэк — браузер по умолчанию);
+  <code>$cdx-open help</code> — открыть эту справку.</li>
+</ul>
+<p>Как пользоваться: в чат Codex введите <code>$cdx-stats</code> и получите цифры, либо попросите
+«покажи статистику кодекса» — модель сама выберет скилл. В веб-версии ChatGPT плагин не работает
+(облако не видит ваш локальный сервер) — только Codex Desktop/CLI/IDE.</p>
+
+<h2>11. Исходники и обновления</h2>
+<p>Git-репозиторий проекта: <a href="https://github.com/vavelifefr/CDXMonitor">github.com/vavelifefr/CDXMonitor</a>.
+Обновление — перекопировать свежий пакет поверх (кроме <code>data/</code>) или повторить
+<code>install.ps1</code>.</p>
+
+<p><a href="boot.html">Стартовая страница</a> · <span id="monWrap"><a id="monLink" href="/">Монитор</a></span> · версия 0.4.0</p>
 <script>
 (function () {
   "use strict";
@@ -140,7 +157,7 @@ Codex (действие запускает <code>start.cmd</code> во встр�
 })();
 </script>
 <hr style="border:0;border-top:1px solid #30363d;margin-top:20px">
-<div class="hint">Autor: Vave© 2026 · <a style="color:#58a6ff" href="mailto:vave@yandex.ru">vave@yandex.ru</a></div>
+<div class="hint">Autor: Vave© 2026 · <a style="color:#58a6ff" href="mailto:vave@yandex.ru">vave@yandex.ru</a> · <a style="color:#58a6ff" href="https://github.com/vavelifefr/CDXMonitor">GitHub</a></div>
 </div>
 <script>
 (function () {

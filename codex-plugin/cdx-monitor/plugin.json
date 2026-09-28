@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "cdx-monitor",
+  "version": "0.4.0",
+  "description": "Local Codex Desktop stats: snapshot table ($cdx-stats) and one-click monitor open ($cdx-open).",
+  "author": {
+    "name": "Vave",
+    "email": "vave@yandex.ru",
+    "url": "https://github.com/vavelifefr/CDXMonitor"
+  },
+  "homepage": "https://github.com/vavelifefr/CDXMonitor",
+  "repository": "https://github.com/vavelifefr/CDXMonitor",
+  "license": "MIT",
+  "keywords": ["codex", "tokens", "monitoring"]
+}

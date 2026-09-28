@@ -1,6 +1,6 @@
 ﻿# Builds release/CDXMonitor/ from dev outputs + packaging templates.
 # Generated dir layout:
-#   web/ server/ config/ data/ start.cmd stop.cmd install.ps1 uninstall.ps1 README.md
+#   web/ server/ config/ data/ codex-plugin/ *.cmd *.ps1 README.md setup.exe
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $root
@@ -29,6 +29,14 @@ foreach ($f in @("start.cmd", "stop.cmd", "cdxm.cmd", "cdxm.ps1", "install.ps1",
 }
 New-Item -ItemType Directory -Path (Join-Path $rel "config") -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $pack "config\cdxmonitor.json") -Destination (Join-Path $rel "config\cdxmonitor.json") -Force
+Copy-Item -LiteralPath (Join-Path $root "codex-plugin") -Destination (Join-Path $rel "codex-plugin") -Recurse -Force
+
+# setup.exe: tiny launcher for install.ps1, compiled with .NET Framework csc
+# (preinstalled on Windows, no SDK/runtime needed on target machines).
+$csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+if (-not (Test-Path -LiteralPath $csc)) { throw "csc.exe not found: $csc" }
+& $csc /nologo /optimize /target:exe "/out:$(Join-Path $rel 'setup.exe')" "$(Join-Path $pack 'setup.cs')"
+if ($LASTEXITCODE -ne 0) { throw "setup.exe compile failed" }
 
 $version = (Get-Content -LiteralPath (Join-Path $root "package.json") -Encoding UTF8 | ConvertFrom-Json).version
 $marker = @{ package = "CDXMonitor"; version = $version } | ConvertTo-Json -Compress

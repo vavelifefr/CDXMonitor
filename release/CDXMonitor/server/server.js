@@ -50,7 +50,7 @@ const types_1 = require("./collector/types");
 const classify_1 = require("./collector/classify");
 const snapshot_1 = require("./collector/snapshot");
 const tail_1 = require("./collector/tail");
-exports.VERSION = "0.3.0";
+exports.VERSION = "0.4.0";
 exports.DEFAULT_PORT = 8765;
 exports.DEFAULT_BIND = "127.0.0.1";
 function walkRollouts(sessionsRoot) {

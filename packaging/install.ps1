@@ -1,6 +1,8 @@
 ﻿param(
     [string]$Target = "",
-    [switch]$Force
+    [switch]$Force,
+    [string]$HomeRoot = "",
+    [switch]$SkipPlugin
 )
 # CDXMonitor portable installer. Copies this package to the target directory.
 # - Never touches Codex files: target must be a "...\CDXMonitor" directory.
@@ -139,4 +141,60 @@ if (-not $onPath) {
 }
 else {
     Write-Output "Already on PATH. Command: cdxm"
+}
+
+# Optional: install the Codex plugin (skills $cdx-stats / $cdx-open) into the
+# user's Codex setup. Consent unless -Force. Restart of Codex picks it up.
+$installPlugin = -not $SkipPlugin
+if ($installPlugin -and -not $Force) {
+    $answer = Read-Host "Install Codex plugin (skills `$cdx-stats / `$cdx-open)? [y/N]"
+    $installPlugin = ($answer -eq "y" -or $answer -eq "Y")
+}
+if ($installPlugin) {
+    $homeRoot = if ($HomeRoot) { $HomeRoot } else { $env:USERPROFILE }
+    $pluginSrc = Join-Path $src "codex-plugin\cdx-monitor"
+    if (Test-Path -LiteralPath $pluginSrc) {
+        $pluginsDir = Join-Path $homeRoot ".codex\plugins\cdx-monitor"
+        if (Test-Path -LiteralPath $pluginsDir) { Remove-Item -LiteralPath $pluginsDir -Recurse -Force }
+        New-Item -ItemType Directory -Path $pluginsDir -Force | Out-Null
+        Copy-Item -Path (Join-Path $pluginSrc "*") -Destination $pluginsDir -Recurse -Force
+
+        $marketDir = Join-Path $homeRoot ".agents\plugins"
+        $marketFile = Join-Path $marketDir "marketplace.json"
+        if (-not (Test-Path -LiteralPath $marketDir)) {
+            New-Item -ItemType Directory -Path $marketDir -Force | Out-Null
+        }
+        $market = $null
+        if (Test-Path -LiteralPath $marketFile) {
+            Copy-Item -LiteralPath $marketFile -Destination ($marketFile + ".bak") -Force
+            try { $market = Get-Content -LiteralPath $marketFile -Encoding UTF8 | ConvertFrom-Json }
+            catch { $market = $null }
+        }
+        if (-not $market) {
+            $market = [ordered]@{
+                name = "cdxmonitor-local"
+                interface = [ordered]@{ displayName = "CDXMonitor (local)" }
+                plugins = @()
+            }
+        }
+        if (-not $market.plugins) {
+            $market | Add-Member -NotePropertyName "plugins" -NotePropertyValue @() -Force
+        }
+        $market.plugins = @($market.plugins | Where-Object { $_.name -ne "cdx-monitor" })
+        $entry = [ordered]@{
+            name = "cdx-monitor"
+            source = [ordered]@{ source = "local"; path = "./.codex/plugins/cdx-monitor" }
+            policy = [ordered]@{ installation = "INSTALLED_BY_DEFAULT"; authentication = "ON_INSTALL" }
+            category = "Productivity"
+        }
+        # NOTE: '$dict.key += $x' silently drops on OrderedDictionary in PS 5.1.
+        $market.plugins = @($market.plugins) + $entry
+        [IO.File]::WriteAllText($marketFile,
+            ($market | ConvertTo-Json -Depth 6),
+            (New-Object System.Text.UTF8Encoding -ArgumentList $false))
+        Write-Output "Codex plugin installed. Restart Codex, then use `$cdx-stats / `$cdx-open."
+    }
+    else {
+        Write-Output "WARNING: plugin sources missing in package, skipped."
+    }
 }

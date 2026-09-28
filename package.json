@@ -1,6 +1,6 @@
 {
   "name": "cdxmonitor",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "commonjs",
   "description": "CDXMonitor: local Codex Desktop stats monitor (read-only).",

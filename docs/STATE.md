@@ -99,6 +99,27 @@ node_modules/dist/web-app). Remote `origin` → `https://github.com/vavelifefr/C
 - Push невозможен: репозитория на GitHub еще нет (404), создать его без gh/токена не могу.
 Жду создания пустого `CDXMonitor` в `vavelifefr`, затем `git push -u origin main`.
 
+## Релиз v0.4.0 (2026-09-28)
+
+Состав: E1–E3, boot/Statistic/help, cdxm, скрытый запуск, lock-файл, переносимый пакет,
+плагин Codex ($cdx-stats/$cdx-open), setup.exe. Проверки ниже — все зеленые.
+
+## Этап P — плагин Codex + setup.exe (2026-09-28, v0.3.0→v0.4.0)
+
+- `codex-plugin/cdx-monitor/`: portable `plugin.json`, skills `$cdx-stats` (таблица снапшота,
+только явный вызов) и `$cdx-open` (Chrome с фолбэком, `-DryRun`, `-Page help`).
+- `install.ps1`: установка плагина с согласия (`-Force` без спроса, `-SkipPlugin` отказ,
+`-HomeRoot` для тестов): копия в `.codex\plugins`, merge персонального marketplace
+(точно по документации, `.bak`, без дублей). `uninstall.ps1` вычищает оба.
+- `setup.exe`: компилируется `build-release` штатным Framework `csc` (без SDK на целевой
+машине); `--version`/`--help`; делегирует `install.ps1`.
+- Проверено в TEMP-HOME: установка/переустановка (одна запись), живые цифры `$cdx-stats`
+по поднятому серверу, `open.ps1 -DryRun` (URL + путь Chrome), удаление (каталог и запись
+исчезли, реальный HOME не тронут). Открыто: появление плагина в UI Codex после рестарта
+(проверяет пользователь); песочница Codex для локальных скриптов скилла — при первом вызове.
+- Найдено: `$dict.key += $x` молча теряется на OrderedDictionary в PS 5.1 — только явное
+присваивание.
+
 ## Исследование интеграции (2026-09-28, без изменений в Codex)
 
 Источники: `developers.openai.com/codex/app/browser` (In-app browser), `/app/local-environments`

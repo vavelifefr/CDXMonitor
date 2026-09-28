@@ -3,6 +3,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import * as fs from "fs";
+import * as net from "node:net";
 import * as os from "os";
 import * as path from "path";
 import { RunningServer, startServer } from "../src/server";
@@ -253,6 +254,58 @@ describe("entry point log file", () => {
       }
       assert.ok(fs.existsSync(lockPath));
       const second = run([]);
+      const code: number = await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          second.kill();
+          resolve(-99);
+        }, 15000);
+        second.on("exit", (c) => {
+          clearTimeout(timer);
+          resolve(c ?? -98);
+        });
+      });
+      assert.equal(code, 1);
+    } finally {
+      first.kill();
+    }
+  });
+
+  it("refuses a second instance on the same port from another data dir", async () => {
+    const port: number = await new Promise((resolve, reject) => {
+      const s = net.createServer();
+      s.on("error", reject);
+      s.listen(0, "127.0.0.1", () => {
+        const addr = s.address();
+        const p = typeof addr === "object" && addr ? addr.port : 0;
+        s.close(() => resolve(p));
+      });
+    });
+    assert.ok(port > 0);
+    const webDir = path.resolve(__dirname, "..", "..", "web");
+    const mainJs = path.resolve(__dirname, "..", "src", "main.js");
+    const mkSessions = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cdx-plock-"));
+      fs.mkdirSync(path.join(dir, "sessions"));
+      return dir;
+    };
+    const dirA = mkSessions();
+    const dirB = mkSessions();
+    const run = (dir: string) =>
+      spawn(process.execPath,
+        [mainJs, "--port", String(port), "--sessions", path.join(dir, "sessions"),
+          "--web-dir", webDir, "--data-dir", path.join(dir, "data")],
+        { stdio: "ignore" });
+    const first = run(dirA);
+    try {
+      const tmp = process.env["TEMP"] ?? process.env["TMP"] ?? os.tmpdir();
+      const lockPath = path.join(tmp, "cdxmonitor-port-" + String(port) + ".lock");
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if (fs.existsSync(lockPath)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(fs.existsSync(lockPath));
+      const second = run(dirB);
       const code: number = await new Promise((resolve) => {
         const timer = setTimeout(() => {
           second.kill();

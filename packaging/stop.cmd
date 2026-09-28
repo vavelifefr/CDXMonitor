@@ -9,4 +9,5 @@ set /p CDXPID=<data\cdxmonitor.pid
 taskkill /PID %CDXPID% /F
 del data\cdxmonitor.pid
 if exist data\server.lock del data\server.lock
+powershell -NoProfile -Command "$port=((Get-Content -LiteralPath 'config\cdxmonitor.json' -Encoding UTF8 | ConvertFrom-Json).port); if (-not $port) { $port=8765 }; $lock=Join-Path $env:TEMP ('cdxmonitor-port-'+$port+'.lock'); if (Test-Path -LiteralPath $lock) { Remove-Item -LiteralPath $lock -Force }"
 echo CDXMonitor stopped.
