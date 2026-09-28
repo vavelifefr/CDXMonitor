@@ -31,6 +31,21 @@ export interface CompactionInfo {
   lastInput: number | null;
 }
 
+export interface TurnStat {
+  input: number;
+  cached: number;
+  output: number;
+  reasoning: number;
+  events: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface SeriesPoint {
+  t: number;
+  input: number;
+}
+
 export interface CollectorState {
   file: string | null;
   model: string;
@@ -68,6 +83,12 @@ export interface CollectorState {
   tokenEvents: number;
   compaction: CompactionInfo;
   unknownRecords: number;
+
+  // E4 aggregate views (additive; do not affect TURN/TASK/ROLLOUT semantics).
+  turnStats: Map<string, TurnStat>;
+  turnModels: Map<string, string>;
+  toolCalls: Record<string, number>;
+  series: SeriesPoint[];
 }
 
 export function initialState(): CollectorState {
@@ -102,6 +123,10 @@ export function initialState(): CollectorState {
     tokenEvents: 0,
     compaction: { count: 0, lastTime: "", lastWindow: null, lastInput: null },
     unknownRecords: 0,
+    turnStats: new Map(),
+    turnModels: new Map(),
+    toolCalls: {},
+    series: [],
   };
 }
 

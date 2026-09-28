@@ -243,7 +243,7 @@ async function main(): Promise<number> {
   }
   const listenMsg =
     "listening on http://" + bind + ":" + String(running.port) + "/ pid=" + String(process.pid);
-  process.stdout.write("CDXMonitor v0.4.0 on http://" + bind + ":" + String(running.port) + "/\n");
+  process.stdout.write("CDXMonitor v0.5.0 on http://" + bind + ":" + String(running.port) + "/\n");
   logLine(logFile, listenMsg);
   const shutdown = () => {
     void running.stop().then(() => {

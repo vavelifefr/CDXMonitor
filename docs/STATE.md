@@ -86,6 +86,8 @@ lock. Тест spawn×2.
 папку в user PATH (с согласия, + broadcast), `uninstall.ps1` убирает. Сервер терпит BOM
 в JSON-конфиге. Проверено в TEMP: help/status/start/stop, PATH туда-обратно чисто.
 `--open` живьем не тестировался (открывает браузер).
+- `stop.cmd` дописывает `stopped via stop.cmd` в лог (taskkill /F не дает серверу
+записаться самому). Проверено: строка в логе, порт закрыт, pid/lock убраны.
 - Скрытый запуск (баг «окно терминала»): `start.cmd` поднимает сервер без окна консоли
 (powershell Start-Process Hidden), ждет health до 10 c и сообщает итог; диагностика —
 `--log-file` (`data/cdxmonitor.log`, старт/ошибки/fatal). Протокол тоже запускает скрыто.
@@ -99,10 +101,24 @@ node_modules/dist/web-app). Remote `origin` → `https://github.com/vavelifefr/C
 - Push невозможен: репозитория на GitHub еще нет (404), создать его без gh/токена не могу.
 Жду создания пустого `CDXMonitor` в `vavelifefr`, затем `git push -u origin main`.
 
-## Релиз v0.4.0 (2026-09-28)
+## Релиз v0.5.0 (2026-09-28)
 
 Состав: E1–E3, boot/Statistic/help, cdxm, скрытый запуск, lock-файл, переносимый пакет,
 плагин Codex ($cdx-stats/$cdx-open), setup.exe. Проверки ниже — все зеленые.
+
+## Категории v0.5.0 — Turns/Tools/Sessions/CodexDB (2026-09-28)
+
+- Коллектор: turnStats/turnModels (по `turn_id`), toolCalls (`response_item`), series (cap 10000);
+A1-семантика не тронута. Тесты 43/43 (incl. synthetic SQLite через `node:sqlite`).
+- API: `/api/turns` (кэш 30 c + `?refresh=1`), `/api/activity` (tools + series),
+`/api/reviews` (on-demand скан auxiliary, кэш), `/api/codex/*` (ro SQLite/JSON, вручную).
+- UI: вкладки Turns (фильтр по модели, авто 30 c + кнопка), Tools (счетчики + цена review
+кнопкой), Sessions (ось контекста + список файлов), CodexDB (кнопка: проекты, сессии,
+туры по кнопке, окна каталога); флаги лимитов уже были в Limits.
+- Каденс снижен: SSE/снапшот 1 c → 5 c, rescan 5 c → 15 c (события минутные; отсчеты и
+LIVE считаются клиентом из меток — потерь нет). Boot-опрос 1 c оставлен (до перехода).
+- Живая проверка: 43 тура, tools (reasoning 2503, custom_tool_call 1603…), 60 review-файлов
+за 0.2 c (23.6M in), проекты CtrlVave/Dental Tech Calendar, каталог 9 моделей.
 
 ## Этап P — плагин Codex + setup.exe (2026-09-28, v0.3.0→v0.4.0)
 
@@ -119,6 +135,12 @@ node_modules/dist/web-app). Remote `origin` → `https://github.com/vavelifefr/C
 (проверяет пользователь); песочница Codex для локальных скриптов скилла — при первом вызове.
 - Найдено: `$dict.key += $x` молча теряется на OrderedDictionary в PS 5.1 — только явное
 присваивание.
+- `uninstall.exe` (пара к `setup.exe`): `--keep-data`/`--remove-data`/`--home-root`,
+самокопирование в TEMP (образ нельзя удалить запущенным), fire-and-forget (ожидание
+блокирует удаление), отложенная чистка stage, проброс HomeRoot для чистки плагина.
+- Удаление корня: свежие бинарники минутами лочатся AV/индексатором (ручное удаление позже —
+ок) — retry 10×500мс + отложенный скрытый `rd`-цикл ~10 мин + честное сообщение.
+Проверено: keep-data (файлы ушли включая exe, data цела), remove-data (отложенно).
 
 ## Исследование интеграции (2026-09-28, без изменений в Codex)
 

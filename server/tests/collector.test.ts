@@ -277,3 +277,52 @@ describe("tail reader", () => {
     assert.equal(state.total.input, 700);
   });
 });
+
+describe("per-turn aggregates", () => {
+  it("groups usage by turn_id", () => {
+    const s = feed([
+      usageRecord({ turnId: "a", input: 1000, cached: 800, output: 100, reasoning: 20 }),
+      usageRecord({ turnId: "a", input: 2000, cached: 1500, output: 200, reasoning: 40 }),
+      usageRecord({ turnId: "b", input: 500, cached: 100, output: 50, reasoning: 5 }),
+    ]);
+    assert.equal(s.turnStats.size, 2);
+    const a = s.turnStats.get("a");
+    assert.ok(a);
+    assert.equal(a.input, 3000);
+    assert.equal(a.events, 2);
+    assert.equal(s.turnStats.get("b")?.output, 50);
+  });
+
+  it("maps turn_id to model from turn_context", () => {
+    const s = feed([
+      { type: "turn_context", payload: { turn_id: "a", model: "gpt-6-sol" } },
+      usageRecord({ turnId: "a", input: 100, cached: 10, output: 10, reasoning: 1 }),
+    ]);
+    assert.equal(s.turnModels.get("a"), "gpt-6-sol");
+    assert.equal(s.model, "gpt-6-sol");
+  });
+});
+
+describe("tool activity and series", () => {
+  it("counts response_item payload types", () => {
+    const s = feed([
+      { type: "response_item", payload: { type: "function_call" } },
+      { type: "response_item", payload: { type: "function_call" } },
+      { type: "response_item", payload: { type: "custom_tool_call_output" } },
+      { type: "response_item", payload: {} },
+    ]);
+    assert.equal(s.toolCalls["function_call"], 2);
+    assert.equal(s.toolCalls["custom_tool_call_output"], 1);
+    assert.equal(s.unknownRecords, 1);
+  });
+
+  it("records a series point per usage event", () => {
+    const s = feed([
+      usageRecord({ timestamp: "2026-09-22T18:43:50Z", input: 1000 }),
+      usageRecord({ timestamp: "2026-09-22T18:44:50Z", input: 2000 }),
+    ]);
+    assert.equal(s.series.length, 2);
+    assert.ok(s.series[1]!.t > s.series[0]!.t);
+    assert.equal(s.series[1]!.input, 2000);
+  });
+});

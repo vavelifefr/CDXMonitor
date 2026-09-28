@@ -29,7 +29,7 @@
 <h2>1. Требования</h2>
 <ul>
   <li>Windows 11 x64, установленный Codex Desktop (источник данных: <code>%USERPROFILE%\.codex\sessions</code>).</li>
-  <li>Node.js 24+ в PATH (для текущей dev-сборки; переносимая сборка решит вопрос рантайма на этапе E8).</li>
+  <li>Node.js 24+ в PATH (нужен и dev-сборке, и переносимой).</li>
 </ul>
 
 <h2>2. Первый запуск (dev-сборка)</h2>
@@ -62,7 +62,11 @@ npm run serve   # сервер на http://127.0.0.1:8765/</pre>
   <tr><td>Overview</td><td>Модель, контекст (занято/окно/%), TURN/TASK/ROLLOUT кратко, лимиты, задачи, compaction</td></tr>
   <tr><td>Context</td><td>Окно, остаток, fresh, cache ratio, дельта за событие</td></tr>
   <tr><td>Tokens</td><td>Полная таблица input/cached/cache-write/fresh/output/reasoning/total по TURN/TASK/ROLLOUT</td></tr>
-  <tr><td>Limits</td><td>Лимиты 5h и weekly: расход, обратный отсчет сброса, атрибуты лимита</td></tr>
+  <tr><td>Limits</td><td>Лимиты 5h и weekly: расход, обратный отсчет сброса, атрибуты и флаги лимита</td></tr>
+  <tr><td>Turns</td><td>Потурневой разрез активной сессии, фильтр по модели (обновление каждые 30 c + кнопка)</td></tr>
+  <tr><td>Tools</td><td>Счетчики вызовов инструментов; цена review-детей — кнопкой (сканирует auxiliary-файлы)</td></tr>
+  <tr><td>Sessions</td><td>Временная ось контекста активной сессии; список файлов сессий</td></tr>
+  <tr><td>CodexDB</td><td>SQLite Codex по кнопке: проекты, сессии (название/модель/счетчик), туры треда (статусы/длительности), окна каталога</td></tr>
 </table>
 <p>Данные обновляются автоматически каждую секунду (SSE), перезагрузка не нужна.</p>
 
@@ -81,7 +85,8 @@ npm run serve   # сервер на http://127.0.0.1:8765/</pre>
 <table>
   <tr><th>Симптом</th><th>Действие</th></tr>
   <tr><td>Статус WAIT / «Нет связи с сервером»</td><td>Проверьте, что сервер запущен и адрес введен точно</td></tr>
-  <tr><td>Порт занят</td><td>Остановите второй экземпляр или задайте <code>--port</code></td></tr>
+  <tr><td>Порт занят / уже запущено</td><td>Второй экземпляр отказывается явно. Остановите первый (<code>cdxm stop</code> / <code>stop.cmd</code>) или смените порт</td></tr>
+  <tr><td>Нет окна консоли после старта</td><td>Так задумано: сервер работает скрыто. Диагностика — <code>data\cdxmonitor.log</code></td></tr>
   <tr><td>Пусто после переустановки Codex</td><td>Сессии лежат в <code>.codex\sessions</code> — дождитесь новой активности Codex</td></tr>
   <tr><td>Подозрительные цифры после обновления Codex</td><td>Смотрите вкладку Diagnostics (этапы E4–E7): счетчик неизвестных записей схемы</td></tr>
 </table>
@@ -95,12 +100,15 @@ npm run serve   # сервер на http://127.0.0.1:8765/</pre>
 <code>scripts\build-release.ps1</code>. Переносится целиком, как есть.</p>
 <table>
   <tr><th>Файл/папка пакета</th><th>Назначение</th></tr>
-  <tr><td><code>web/</code></td><td>Интерфейс: монитор, <code>boot.html</code>, <code>help.html</code> (эта страница), <code>pages/</code></td></tr>
+  <tr><td><code>web/</code></td><td>Интерфейс: монитор, <code>boot.html</code> (старт без сервера), <code>Statistic.html</code> (файл-алиас на монитор), <code>help.html</code> (эта страница), <code>pages/</code></td></tr>
   <tr><td><code>server/</code></td><td>Локальный сервер и сборщик статистики (готовый к запуску)</td></tr>
   <tr><td><code>config/cdxmonitor.json</code></td><td>Настройки: порт (8765), bind, каталог сессий, <code>dataDir</code></td></tr>
-  <tr><td><code>data/</code></td><td>Ваши данные (история, PID-файл). При обновлении не затирается</td></tr>
-  <tr><td><code>start.cmd</code></td><td>Запуск двойным кликом</td></tr>
-  <tr><td><code>stop.cmd</code></td><td>Остановка</td></tr>
+  <tr><td><code>data/</code></td><td>Ваши данные (история, PID/lock-файлы) и <code>cdxmonitor.log</code>. При обновлении не затирается</td></tr>
+  <tr><td><code>start.cmd</code></td><td>Запуск двойным кликом (сервер работает скрыто, без окна консоли)</td></tr>
+  <tr><td><code>stop.cmd</code></td><td>Остановка (пишет <code>stopped via stop.cmd</code> в лог)</td></tr>
+  <tr><td><code>cdxm.cmd</code></td><td>Команда терминала: старт/статус/стоп/справка (нужен PATH от установщика)</td></tr>
+  <tr><td><code>setup.exe</code></td><td>Стандартный запуск установки (вызывает <code>install.ps1</code>)</td></tr>
+  <tr><td><code>codex-plugin/</code></td><td>Плагин Codex: скиллы <code>$cdx-stats</code> / <code>$cdx-open</code></td></tr>
   <tr><td><code>install.ps1</code></td><td>Установка с выбором расположения и сохранением <code>data/</code></td></tr>
   <tr><td><code>uninstall.ps1</code></td><td>Удаление только файлов CDXMonitor (<code>data/</code> сохраняется)</td></tr>
   <tr><td><code>README.md</code></td><td>Краткая инструкция пакета</td></tr>
@@ -143,7 +151,7 @@ Codex (действие запускает <code>start.cmd</code> во встр�
 Обновление — перекопировать свежий пакет поверх (кроме <code>data/</code>) или повторить
 <code>install.ps1</code>.</p>
 
-<p><a href="boot.html">Стартовая страница</a> · <span id="monWrap"><a id="monLink" href="/">Монитор</a></span> · версия 0.4.0</p>
+<p><a href="boot.html">Стартовая страница</a> · <span id="monWrap"><a id="monLink" href="/">Монитор</a></span> · версия 0.5.0</p>
 <script>
 (function () {
   "use strict";

@@ -1,11 +1,15 @@
 "use strict";
 // E2 HTTP server: stdlib node:http only. Routes:
 //   GET /api/health   -> status + CORS * (polled by file:// boot page)
-//   GET /api/snapshot -> current snapshot JSON
+//   GET /api/snapshot -> current snapshot JSON (5 s data)
 //   GET /api/sessions -> rollout list (id/kind/mtime/size, no paths)
-//   GET /api/events   -> SSE snapshot tick (1 Hz)
-//   GET /boot         -> boot.html (no-server start page)
-//   GET /             -> stub app page (E2 placeholder, React UI lands in E3)
+//   GET /api/turns    -> per-turn aggregates (recomputed at most every 30 s)
+//   GET /api/activity -> tool counters + context series
+//   GET /api/reviews  -> auxiliary-rollout usage (on demand, cached)
+//   GET /api/codex/*  -> read-only Codex SQLite/JSON (manual refresh, no polling)
+//   GET /api/events   -> SSE snapshot tick (5 s)
+//   GET /boot, /boot.html, /help, /help.html, /Statistic.html, /stub, /stub.html
+//   GET /             -> built UI (fallback stub)
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -40,7 +44,10 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_BIND = exports.DEFAULT_PORT = exports.VERSION = void 0;
+exports.TURNS_CACHE_SECONDS = exports.DEFAULT_BIND = exports.DEFAULT_PORT = exports.VERSION = void 0;
+exports.buildTurnsView = buildTurnsView;
+exports.scanFileUsage = scanFileUsage;
+exports.buildReviewsView = buildReviewsView;
 exports.listSessions = listSessions;
 exports.startServer = startServer;
 const fs = __importStar(require("fs"));
@@ -50,9 +57,11 @@ const types_1 = require("./collector/types");
 const classify_1 = require("./collector/classify");
 const snapshot_1 = require("./collector/snapshot");
 const tail_1 = require("./collector/tail");
-exports.VERSION = "0.4.0";
+const codexdb_1 = require("./codexdb");
+exports.VERSION = "0.5.0";
 exports.DEFAULT_PORT = 8765;
 exports.DEFAULT_BIND = "127.0.0.1";
+exports.TURNS_CACHE_SECONDS = 30;
 function walkRollouts(sessionsRoot) {
     const out = [];
     const walk = (dir) => {
@@ -76,6 +85,116 @@ function walkRollouts(sessionsRoot) {
     };
     walk(sessionsRoot);
     return out;
+}
+function buildTurnsView(state) {
+    const out = [];
+    for (const [id, s] of state.turnStats) {
+        out.push({
+            id,
+            model: state.turnModels.get(id) ?? "",
+            input: s.input,
+            cached: s.cached,
+            output: s.output,
+            reasoning: s.reasoning,
+            events: s.events,
+            firstSeen: s.firstSeen,
+            lastSeen: s.lastSeen,
+        });
+    }
+    out.sort((a, b) => b.input - a.input);
+    return out;
+}
+// Sums token_usage_record usage per file. Streaming + needle prefilter, so
+// even hundred-MB auxiliary rollouts scan in seconds. On demand only.
+function scanFileUsage(filePath) {
+    const acc = { input: 0, output: 0, events: 0 };
+    let fd;
+    try {
+        fd = fs.openSync(filePath, "r");
+    }
+    catch {
+        return acc;
+    }
+    try {
+        const stat = fs.fstatSync(fd);
+        const CHUNK = 1024 * 1024;
+        let offset = 0;
+        let carry = "";
+        const buf = Buffer.alloc(CHUNK);
+        while (offset < stat.size) {
+            const toRead = Math.min(CHUNK, stat.size - offset);
+            const n = fs.readSync(fd, buf, 0, toRead, offset);
+            if (n <= 0)
+                break;
+            offset += n;
+            const text = carry + buf.subarray(0, n).toString("utf8");
+            const parts = text.split("\n");
+            carry = parts.pop() ?? "";
+            for (const line of parts) {
+                if (!line.includes('"token_usage_record"'))
+                    continue;
+                try {
+                    const obj = JSON.parse(line);
+                    if (obj["type"] !== "token_usage_record")
+                        continue;
+                    const payload = obj["payload"];
+                    if (typeof payload !== "object" || payload === null)
+                        continue;
+                    const usage = payload["usage"];
+                    if (typeof usage !== "object" || usage === null)
+                        continue;
+                    const u = usage;
+                    const input = typeof u["input_tokens"] === "number" ? u["input_tokens"] : 0;
+                    const output = typeof u["output_tokens"] === "number" ? u["output_tokens"] : 0;
+                    acc.input += input;
+                    acc.output += output;
+                    acc.events += 1;
+                }
+                catch {
+                    // ignore malformed lines
+                }
+            }
+        }
+    }
+    catch {
+        // ignore read errors mid-scan
+    }
+    finally {
+        try {
+            fs.closeSync(fd);
+        }
+        catch {
+            // ignore
+        }
+    }
+    return acc;
+}
+function buildReviewsView(sessionsRoot) {
+    const files = [];
+    let totalInput = 0;
+    let totalOutput = 0;
+    for (const full of walkRollouts(sessionsRoot)) {
+        let kind;
+        try {
+            kind = (0, classify_1.classifyRollout)(full);
+        }
+        catch {
+            continue;
+        }
+        if (kind !== "auxiliary")
+            continue;
+        const u = scanFileUsage(full);
+        files.push({ id: path.basename(full), input: u.input, output: u.output, events: u.events });
+        totalInput += u.input;
+        totalOutput += u.output;
+    }
+    files.sort((a, b) => b.input - a.input);
+    return {
+        updatedAt: new Date().toISOString(),
+        files,
+        totalInput,
+        totalOutput,
+    };
 }
 function listSessions(sessionsRoot) {
     const entries = [];
@@ -104,6 +223,9 @@ class Tracker {
     cursor = (0, tail_1.newCursor)();
     lastScan = 0;
     startedAt = Date.now();
+    turnsCache = [];
+    turnsAt = 0;
+    reviewsCache = null;
     constructor(sessionsRoot, explicitFile, rescanSeconds) {
         this.sessionsRoot = sessionsRoot;
         this.explicitFile = explicitFile;
@@ -123,6 +245,8 @@ class Tracker {
                 this.cursor = (0, tail_1.newCursor)();
                 (0, tail_1.scanFullFile)(newest, this.state, this.cursor);
                 this.state.file = newest;
+                this.turnsCache = [];
+                this.turnsAt = 0;
             }
         }
         if (this.state.file !== null) {
@@ -193,8 +317,11 @@ function sendAppStatic(res, appDir, pathname) {
     return true;
 }
 function startServer(opts) {
-    const rescanSeconds = opts.rescanSeconds ?? 5;
-    const tickMs = opts.tickMs ?? 1000;
+    // Rare cadence by design: usage events are minutes apart; countdowns and
+    // LIVE/IDLE render client-side from event timestamps, so a 5 s tick loses
+    // nothing while cutting traffic and re-renders 5x vs the 1 Hz reference.
+    const rescanSeconds = opts.rescanSeconds ?? 15;
+    const tickMs = opts.tickMs ?? 5000;
     const tracker = new Tracker(opts.sessionsRoot, opts.explicitFile, rescanSeconds);
     const clients = new Set();
     const server = http.createServer((req, res) => {
@@ -224,6 +351,59 @@ function startServer(opts) {
         }
         if (pathname === "/api/sessions" && req.method === "GET") {
             sendJson(res, 200, listSessions(opts.sessionsRoot));
+            return;
+        }
+        if (pathname === "/api/turns" && req.method === "GET") {
+            const now = Date.now();
+            const force = url.searchParams.get("refresh") === "1";
+            if (force || now - tracker.turnsAt > exports.TURNS_CACHE_SECONDS * 1000) {
+                tracker.turnsCache = buildTurnsView(tracker.state);
+                tracker.turnsAt = now;
+            }
+            sendJson(res, 200, {
+                updatedAt: new Date(tracker.turnsAt).toISOString(),
+                turns: tracker.turnsCache,
+            });
+            return;
+        }
+        if (pathname === "/api/activity" && req.method === "GET") {
+            tracker.tick();
+            sendJson(res, 200, {
+                tools: tracker.state.toolCalls,
+                series: tracker.state.series.slice(-240),
+                compaction: tracker.state.compaction.count,
+            });
+            return;
+        }
+        if (pathname === "/api/reviews" && req.method === "GET") {
+            const force = url.searchParams.get("refresh") === "1";
+            if (force || tracker.reviewsCache === null) {
+                tracker.reviewsCache = buildReviewsView(opts.sessionsRoot);
+            }
+            sendJson(res, 200, tracker.reviewsCache);
+            return;
+        }
+        if (pathname === "/api/codex/status" && req.method === "GET") {
+            const base = (0, codexdb_1.codexBaseFromSessions)(opts.sessionsRoot);
+            sendJson(res, 200, { baseDir: base.baseDir, files: (0, codexdb_1.filesPresent)(base) });
+            return;
+        }
+        if (pathname === "/api/codex/projects" && req.method === "GET") {
+            sendJson(res, 200, (0, codexdb_1.listProjects)((0, codexdb_1.codexBaseFromSessions)(opts.sessionsRoot)));
+            return;
+        }
+        if (pathname === "/api/codex/sessions" && req.method === "GET") {
+            const limit = Number(url.searchParams.get("limit") ?? 200) || 200;
+            sendJson(res, 200, (0, codexdb_1.listThreads)((0, codexdb_1.codexBaseFromSessions)(opts.sessionsRoot), limit));
+            return;
+        }
+        if (pathname === "/api/codex/turns" && req.method === "GET") {
+            const thread = url.searchParams.get("thread") ?? "";
+            sendJson(res, 200, (0, codexdb_1.threadTurns)((0, codexdb_1.codexBaseFromSessions)(opts.sessionsRoot), thread));
+            return;
+        }
+        if (pathname === "/api/codex/catalog" && req.method === "GET") {
+            sendJson(res, 200, (0, codexdb_1.readCatalog)((0, codexdb_1.codexBaseFromSessions)(opts.sessionsRoot)));
             return;
         }
         if (pathname === "/api/events" && req.method === "GET") {

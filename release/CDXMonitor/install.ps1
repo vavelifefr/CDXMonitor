@@ -70,7 +70,7 @@ Get-ChildItem -LiteralPath $src -Force | Where-Object { $_.Name -ne "data" } | F
 # Migration: pre-fix installer nested dirs instead of updating them.
 foreach ($nested in @("web\web", "server\server", "config\config")) {
     $p = Join-Path $Target $nested
-    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
+    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -Confirm:$false }
 }
 
 # Absolutize inter-page links in the INSTALLED copy to full machine-specific
@@ -155,7 +155,7 @@ if ($installPlugin) {
     $pluginSrc = Join-Path $src "codex-plugin\cdx-monitor"
     if (Test-Path -LiteralPath $pluginSrc) {
         $pluginsDir = Join-Path $homeRoot ".codex\plugins\cdx-monitor"
-        if (Test-Path -LiteralPath $pluginsDir) { Remove-Item -LiteralPath $pluginsDir -Recurse -Force }
+        if (Test-Path -LiteralPath $pluginsDir) { Remove-Item -LiteralPath $pluginsDir -Recurse -Force -Confirm:$false }
         New-Item -ItemType Directory -Path $pluginsDir -Force | Out-Null
         Copy-Item -Path (Join-Path $pluginSrc "*") -Destination $pluginsDir -Recurse -Force
 

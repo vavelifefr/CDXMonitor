@@ -1,10 +1,14 @@
 ﻿// E2 HTTP server: stdlib node:http only. Routes:
 //   GET /api/health   -> status + CORS * (polled by file:// boot page)
-//   GET /api/snapshot -> current snapshot JSON
+//   GET /api/snapshot -> current snapshot JSON (5 s data)
 //   GET /api/sessions -> rollout list (id/kind/mtime/size, no paths)
-//   GET /api/events   -> SSE snapshot tick (1 Hz)
-//   GET /boot         -> boot.html (no-server start page)
-//   GET /             -> stub app page (E2 placeholder, React UI lands in E3)
+//   GET /api/turns    -> per-turn aggregates (recomputed at most every 30 s)
+//   GET /api/activity -> tool counters + context series
+//   GET /api/reviews  -> auxiliary-rollout usage (on demand, cached)
+//   GET /api/codex/*  -> read-only Codex SQLite/JSON (manual refresh, no polling)
+//   GET /api/events   -> SSE snapshot tick (5 s)
+//   GET /boot, /boot.html, /help, /help.html, /Statistic.html, /stub, /stub.html
+//   GET /             -> built UI (fallback stub)
 
 import * as fs from "fs";
 import * as http from "http";
@@ -13,10 +17,19 @@ import { CollectorState, initialState } from "./collector/types";
 import { classifyRollout, newestRollout } from "./collector/classify";
 import { buildSnapshot } from "./collector/snapshot";
 import { newCursor, readNew, scanFullFile, TailCursor } from "./collector/tail";
+import {
+  codexBaseFromSessions,
+  filesPresent,
+  listProjects,
+  listThreads,
+  readCatalog,
+  threadTurns,
+} from "./codexdb";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 export const DEFAULT_PORT = 8765;
 export const DEFAULT_BIND = "127.0.0.1";
+export const TURNS_CACHE_SECONDS = 30;
 
 export interface ServerOptions {
   port: number;
@@ -60,6 +73,133 @@ function walkRollouts(sessionsRoot: string): string[] {
   return out;
 }
 
+export interface TurnView {
+  id: string;
+  model: string;
+  input: number;
+  cached: number;
+  output: number;
+  reasoning: number;
+  events: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export function buildTurnsView(state: CollectorState): TurnView[] {
+  const out: TurnView[] = [];
+  for (const [id, s] of state.turnStats) {
+    out.push({
+      id,
+      model: state.turnModels.get(id) ?? "",
+      input: s.input,
+      cached: s.cached,
+      output: s.output,
+      reasoning: s.reasoning,
+      events: s.events,
+      firstSeen: s.firstSeen,
+      lastSeen: s.lastSeen,
+    });
+  }
+  out.sort((a, b) => b.input - a.input);
+  return out;
+}
+
+export interface ReviewUsage {
+  id: string;
+  input: number;
+  output: number;
+  events: number;
+}
+
+// Sums token_usage_record usage per file. Streaming + needle prefilter, so
+// even hundred-MB auxiliary rollouts scan in seconds. On demand only.
+export function scanFileUsage(filePath: string): { input: number; output: number; events: number } {
+  const acc = { input: 0, output: 0, events: 0 };
+  let fd: number;
+  try {
+    fd = fs.openSync(filePath, "r");
+  } catch {
+    return acc;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    const CHUNK = 1024 * 1024;
+    let offset = 0;
+    let carry = "";
+    const buf = Buffer.alloc(CHUNK);
+    while (offset < stat.size) {
+      const toRead = Math.min(CHUNK, stat.size - offset);
+      const n = fs.readSync(fd, buf, 0, toRead, offset);
+      if (n <= 0) break;
+      offset += n;
+      const text = carry + buf.subarray(0, n).toString("utf8");
+      const parts = text.split("\n");
+      carry = parts.pop() ?? "";
+      for (const line of parts) {
+        if (!line.includes('"token_usage_record"')) continue;
+        try {
+          const obj = JSON.parse(line) as Record<string, unknown>;
+          if (obj["type"] !== "token_usage_record") continue;
+          const payload = obj["payload"];
+          if (typeof payload !== "object" || payload === null) continue;
+          const usage = (payload as Record<string, unknown>)["usage"];
+          if (typeof usage !== "object" || usage === null) continue;
+          const u = usage as Record<string, unknown>;
+          const input = typeof u["input_tokens"] === "number" ? u["input_tokens"] as number : 0;
+          const output = typeof u["output_tokens"] === "number" ? u["output_tokens"] as number : 0;
+          acc.input += input;
+          acc.output += output;
+          acc.events += 1;
+        } catch {
+          // ignore malformed lines
+        }
+      }
+    }
+  } catch {
+    // ignore read errors mid-scan
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // ignore
+    }
+  }
+  return acc;
+}
+
+export interface ReviewsView {
+  updatedAt: string;
+  files: ReviewUsage[];
+  totalInput: number;
+  totalOutput: number;
+}
+
+export function buildReviewsView(sessionsRoot: string): ReviewsView {
+  const files: ReviewUsage[] = [];
+  let totalInput = 0;
+  let totalOutput = 0;
+  for (const full of walkRollouts(sessionsRoot)) {
+    let kind: string;
+    try {
+      kind = classifyRollout(full);
+    } catch {
+      continue;
+    }
+    if (kind !== "auxiliary") continue;
+    const u = scanFileUsage(full);
+    files.push({ id: path.basename(full), input: u.input, output: u.output, events: u.events });
+    totalInput += u.input;
+    totalOutput += u.output;
+  }
+  files.sort((a, b) => b.input - a.input);
+  return {
+    updatedAt: new Date().toISOString(),
+    files,
+    totalInput,
+    totalOutput,
+  };
+}
+
 export function listSessions(sessionsRoot: string): SessionEntry[] {
   const entries: SessionEntry[] = [];
   for (const full of walkRollouts(sessionsRoot)) {
@@ -84,6 +224,9 @@ class Tracker {
   cursor: TailCursor = newCursor();
   lastScan = 0;
   startedAt = Date.now();
+  turnsCache: TurnView[] = [];
+  turnsAt = 0;
+  reviewsCache: ReviewsView | null = null;
 
   constructor(
     private sessionsRoot: string,
@@ -106,6 +249,8 @@ class Tracker {
         this.cursor = newCursor();
         scanFullFile(newest, this.state, this.cursor);
         this.state.file = newest;
+        this.turnsCache = [];
+        this.turnsAt = 0;
       }
     }
     if (this.state.file !== null) {
@@ -186,8 +331,11 @@ export interface RunningServer {
 }
 
 export function startServer(opts: ServerOptions): Promise<RunningServer> {
-  const rescanSeconds = opts.rescanSeconds ?? 5;
-  const tickMs = opts.tickMs ?? 1000;
+  // Rare cadence by design: usage events are minutes apart; countdowns and
+  // LIVE/IDLE render client-side from event timestamps, so a 5 s tick loses
+  // nothing while cutting traffic and re-renders 5x vs the 1 Hz reference.
+  const rescanSeconds = opts.rescanSeconds ?? 15;
+  const tickMs = opts.tickMs ?? 5000;
   const tracker = new Tracker(opts.sessionsRoot, opts.explicitFile, rescanSeconds);
   const clients = new Set<http.ServerResponse>();
 
@@ -218,6 +366,59 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     }
     if (pathname === "/api/sessions" && req.method === "GET") {
       sendJson(res, 200, listSessions(opts.sessionsRoot));
+      return;
+    }
+    if (pathname === "/api/turns" && req.method === "GET") {
+      const now = Date.now();
+      const force = url.searchParams.get("refresh") === "1";
+      if (force || now - tracker.turnsAt > TURNS_CACHE_SECONDS * 1000) {
+        tracker.turnsCache = buildTurnsView(tracker.state);
+        tracker.turnsAt = now;
+      }
+      sendJson(res, 200, {
+        updatedAt: new Date(tracker.turnsAt).toISOString(),
+        turns: tracker.turnsCache,
+      });
+      return;
+    }
+    if (pathname === "/api/activity" && req.method === "GET") {
+      tracker.tick();
+      sendJson(res, 200, {
+        tools: tracker.state.toolCalls,
+        series: tracker.state.series.slice(-240),
+        compaction: tracker.state.compaction.count,
+      });
+      return;
+    }
+    if (pathname === "/api/reviews" && req.method === "GET") {
+      const force = url.searchParams.get("refresh") === "1";
+      if (force || tracker.reviewsCache === null) {
+        tracker.reviewsCache = buildReviewsView(opts.sessionsRoot);
+      }
+      sendJson(res, 200, tracker.reviewsCache);
+      return;
+    }
+    if (pathname === "/api/codex/status" && req.method === "GET") {
+      const base = codexBaseFromSessions(opts.sessionsRoot);
+      sendJson(res, 200, { baseDir: base.baseDir, files: filesPresent(base) });
+      return;
+    }
+    if (pathname === "/api/codex/projects" && req.method === "GET") {
+      sendJson(res, 200, listProjects(codexBaseFromSessions(opts.sessionsRoot)));
+      return;
+    }
+    if (pathname === "/api/codex/sessions" && req.method === "GET") {
+      const limit = Number(url.searchParams.get("limit") ?? 200) || 200;
+      sendJson(res, 200, listThreads(codexBaseFromSessions(opts.sessionsRoot), limit));
+      return;
+    }
+    if (pathname === "/api/codex/turns" && req.method === "GET") {
+      const thread = url.searchParams.get("thread") ?? "";
+      sendJson(res, 200, threadTurns(codexBaseFromSessions(opts.sessionsRoot), thread));
+      return;
+    }
+    if (pathname === "/api/codex/catalog" && req.method === "GET") {
+      sendJson(res, 200, readCatalog(codexBaseFromSessions(opts.sessionsRoot)));
       return;
     }
     if (pathname === "/api/events" && req.method === "GET") {

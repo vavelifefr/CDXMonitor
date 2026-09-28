@@ -6,7 +6,7 @@ using System.IO;
 // Build: csc /nologo /optimize /target:exe /out:setup.exe setup.cs
 sealed class Setup
 {
-    const string Version = "0.4.0";
+    const string Version = "0.5.0";
 
     static int Main(string[] args)
     {

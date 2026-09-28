@@ -202,6 +202,38 @@ function updateTaskUsage(
   state.task.total = state.task.input + state.task.output;
 }
 
+function pushSeries(state: CollectorState, timestamp: string, input: number): void {
+  const t = parseTimestampEpoch(timestamp);
+  if (!t) return;
+  state.series.push({ t: Math.round(t * 1000), input });
+  if (state.series.length > 10000) {
+    state.series.splice(0, state.series.length - 10000);
+  }
+}
+
+function trackTurnUsage(
+  state: CollectorState,
+  turnId: string,
+  timestamp: string,
+  u: UsageNumbers,
+): void {
+  const id = turnId || "unknown";
+  let stat = state.turnStats.get(id);
+  if (!stat) {
+    stat = {
+      input: 0, cached: 0, output: 0, reasoning: 0,
+      events: 0, firstSeen: timestamp, lastSeen: timestamp,
+    };
+    state.turnStats.set(id, stat);
+  }
+  stat.input += u.input;
+  stat.cached += u.cached;
+  stat.output += u.output;
+  stat.reasoning += u.reasoning;
+  stat.events += 1;
+  stat.lastSeen = timestamp;
+}
+
 function readUsageNumbers(usage: Record<string, unknown>, totalDefault: number | null): UsageNumbers {
   const input = safeInt(usage["input_tokens"]);
   const output = safeInt(usage["output_tokens"]);
@@ -281,6 +313,7 @@ function updateFromCompacted(state: CollectorState, obj: JsonRecord): void {
   const usage = rec ? asDict(rec["usage"]) : null;
   if (usage) {
     state.compaction.lastInput = safeInt(usage["input_tokens"]);
+    pushSeries(state, asString(obj["timestamp"]), state.compaction.lastInput ?? 0);
   }
 }
 
@@ -318,6 +351,34 @@ export function updateStateFromObj(state: CollectorState, obj: JsonRecord): void
     }
     state.timestamp = asString(obj["timestamp"]);
     state.lastActivityEpoch = parseTimestampEpoch(state.timestamp);
+    const turnId = payload !== null ? asString(payload["turn_id"]) : "";
+    trackTurnUsage(state, turnId, state.timestamp, u);
+    pushSeries(state, state.timestamp, u.input);
+    return;
+  }
+
+  if (objType === "turn_context") {
+    // Map turn_id -> model for the per-turn view (first wins, stable per turn).
+    const payload = asDict(obj["payload"]);
+    if (payload) {
+      const tid = asString(payload["turn_id"]);
+      const model = asString(payload["model"]);
+      if (tid && model && !state.turnModels.has(tid)) {
+        state.turnModels.set(tid, model);
+      }
+    }
+    return;
+  }
+
+  if (objType === "response_item") {
+    // Tool-activity counters (payload types only, no arguments or text).
+    const payload = asDict(obj["payload"]);
+    const ptype = payload ? asString(payload["type"]) : "";
+    if (ptype) {
+      state.toolCalls[ptype] = (state.toolCalls[ptype] ?? 0) + 1;
+    } else {
+      state.unknownRecords += 1;
+    }
     return;
   }
 
@@ -409,11 +470,13 @@ export function parseJsonLine(state: CollectorState, line: string): void {
   else state.unknownRecords += 1;
 }
 
-// Byte-needle prefilter: port of line_might_matter, extended with "compacted".
+// Byte-needle prefilter: port of line_might_matter, extended with "compacted"
+// and "response_item" (tool-activity counters).
 const NEEDLES = [
   '"token_usage_record"',
   '"token_count"',
   '"compacted"',
+  '"response_item"',
   '"user_message"',
   '"task_started"',
   '"task_complete"',

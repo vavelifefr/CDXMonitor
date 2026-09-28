@@ -16,11 +16,43 @@ if (-not (Test-Path -LiteralPath $marker)) {
 
 Get-ChildItem -LiteralPath $Target -Force | ForEach-Object {
     if (($_.Name -eq "data" -or $_.Name -eq ".cdxmonitor-release.json") -and -not $RemoveData) { return }
-    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force -Confirm:$false
 }
 if ($RemoveData) {
-    Remove-Item -LiteralPath $Target -Force
-    Write-Output "Removed (including data): $Target"
+    # Fresh binaries are often briefly locked by AV/indexer: retry, then fall
+    # back to a deferred removal instead of failing.
+    $removed = $false
+    for ($i = 0; $i -lt 10 -and -not $removed; $i++) {
+        try {
+            Remove-Item -LiteralPath $Target -Recurse -Force -Confirm:$false -ErrorAction Stop
+            $removed = $true
+        }
+        catch { Start-Sleep -Milliseconds 500 }
+    }
+    if (-not $removed) {
+        try {
+            # Fresh binaries stay locked for minutes: retry in background (~10 min).
+            # NOTE: the whole body must stay inside (...) — a bare & would end
+            # the FOR body and run rd only once after all pings.
+            # NOTE 2: cd away first — a cleaner running with CWD inside $Target
+            # locks the root itself (observed with our own loop).
+            $cmd = "/c cd /d `"%TEMP%`" & for /L %i in (1,1,120) do (@ping -n 6 127.0.0.1 >nul & " +
+                "@rd /s /q `"$Target`" 2>nul & @if not exist `"$Target`" exit)"
+            Start-Process -FilePath "cmd.exe" -ArgumentList $cmd -WindowStyle Hidden `
+                -WorkingDirectory $env:TEMP
+            Write-Output "Install dir busy (antivirus/indexer). Removal scheduled (~10 min): $Target"
+            $removed = $true
+        }
+        catch {
+            throw "Could not remove install dir (locked): $Target. Delete it manually."
+        }
+    }
+    if (-not (Test-Path -LiteralPath $Target)) {
+        Write-Output "Removed (including data): $Target"
+    }
+    else {
+        Write-Output "Pending deferred removal, verify in ~10 min: $Target"
+    }
 }
 else {
     Write-Output "Removed app files. Kept user data: $(Join-Path $Target 'data')"
@@ -30,7 +62,7 @@ else {
 try {
     $protoBase = "HKCU:\Software\Classes\cdxmonitor"
     if (Test-Path -LiteralPath $protoBase) {
-        Remove-Item -LiteralPath $protoBase -Recurse -Force
+        Remove-Item -LiteralPath $protoBase -Recurse -Force -Confirm:$false
         Write-Output "Protocol cdxmonitor:// unregistered."
     }
 }
@@ -58,7 +90,7 @@ try {
     $homeRoot = if ($HomeRoot) { $HomeRoot } else { $env:USERPROFILE }
     $plugDir = Join-Path $homeRoot ".codex\plugins\cdx-monitor"
     if (Test-Path -LiteralPath $plugDir) {
-        Remove-Item -LiteralPath $plugDir -Recurse -Force
+        Remove-Item -LiteralPath $plugDir -Recurse -Force -Confirm:$false
         Write-Output "Codex plugin removed."
     }
     $marketFile = Join-Path $homeRoot ".agents\plugins\marketplace.json"

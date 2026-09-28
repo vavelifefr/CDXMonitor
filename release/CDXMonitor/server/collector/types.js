@@ -45,6 +45,10 @@ function initialState() {
         tokenEvents: 0,
         compaction: { count: 0, lastTime: "", lastWindow: null, lastInput: null },
         unknownRecords: 0,
+        turnStats: new Map(),
+        turnModels: new Map(),
+        toolCalls: {},
+        series: [],
     };
 }
 function asDict(value) {

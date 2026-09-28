@@ -83,3 +83,18 @@
 ## 6. Запрещено к сбору
 
 Полный текст диалогов (`replacement_history`, `message.content`, `item_json` тел), секреты (`auth.json`, `.sandbox-secrets`, `secrets/`), содержимое `mcp-oauth-locks`. Парсер читает только структурные/числовые поля из белого списка.
+
+## 7. Новые категории (v0.5.0)
+
+| Метрика | Кат. | Источник / способ | Обновление |
+|---|---|---|---|
+| Потурневой разрез (input/output/cached/reasoning/события, модель тура) | Д/В | группировка `token_usage_record` по `turn_id` + `turn_context.model` | серверный кэш 30 c, кнопка |
+| Активность инструментов | Д | счетчики `response_item` типов (`function_call`, `custom_tool_call*`, ...) | по событию |
+| Цена review-детей (по файлам + сумма) | Д/В | on-demand скан auxiliary-rollout (только usage-записи) | кнопка |
+| Временная ось сессии (ряд контекста) | Д | точки usage/compaction (cap 10000) | по событию |
+| Флаги лимитов | Д | `limit_name/limit_id/credits/spend_control/rate_limit_reached_type` | по событию |
+| Проекты Codex | Д | `state_5.sqlite.projects` (ro, изолированно) | вручную |
+| Сессии Codex (title/модель/tokens_used/время) | Д | `state_5.sqlite.threads` | вручную |
+| Статусы и длительности туров | Д | `thread_history.thread_turns` по кнопке на тред | вручную |
+| Счетчик Codex (`tokens_used`) | Д | `threads.tokens_used` (их учет, для сверки) | вручную |
+| Окна каталога | Д | `models_cache.json` (slug/окна/проценты) | вручную |
