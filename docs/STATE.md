@@ -87,6 +87,13 @@ lock. Тест spawn×2.
 Проверено: MainWindowHandle=0, лог пишется, stop.cmd останавливает. Тест `--log-file`
 через spawn. Попутно fixed: `--port 0` теперь означает эфемерный порт (был fallback).
 
+## Git (2026-09-28)
+
+- Локальный репозиторий: `main`, коммит `4b7fbb7`, 68 файлов (LICENSE MIT, без
+node_modules/dist/web-app). Remote `origin` → `https://github.com/vavelifefr/CDXMonitor.git`.
+- Push невозможен: репозитория на GitHub еще нет (404), создать его без gh/токена не могу.
+Жду создания пустого `CDXMonitor` в `vavelifefr`, затем `git push -u origin main`.
+
 ## Исследование интеграции (2026-09-28, без изменений в Codex)
 
 Источники: `developers.openai.com/codex/app/browser` (In-app browser), `/app/local-environments`
